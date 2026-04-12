@@ -8,9 +8,10 @@ from app.core.database import Base
 
 
 class UserRole(str, enum.Enum):
-    admin = "admin"
-    cashier = "cashier"
-    viewer = "viewer"
+    admin      = "admin"
+    supervisor = "supervisor"
+    cashier    = "cashier"
+    rider      = "rider"
 
 
 class User(Base):
@@ -22,6 +23,7 @@ class User(Base):
     email = Column(String(100), unique=True, nullable=True)
     password_hash = Column(String(255), nullable=False)
     role = Column(Enum(UserRole), nullable=False, default=UserRole.cashier)
+    branch = Column(String(100), nullable=True)   # e.g. "Branch 1", "Main", etc.
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

@@ -54,12 +54,32 @@ CURRENCIES = [
 ]
 
 ADMIN_USER = {
-    "username": "admin",
+    "username":  "admin",
     "full_name": "Administrator",
-    "email": "admin@kedco.local",
-    "password": "ChangeMe@2026!",   # you will be prompted to change this
-    "role": UserRole.admin,
+    "email":     "admin@kedco.local",
+    "password":  "ChangeMe@2026!",
+    "role":      UserRole.admin,
+    "branch":    None,
 }
+
+DEFAULT_PASSWORD = "Kedco@2026!"
+
+STAFF_USERS = (
+    # ── Supervisors ──
+    [{"username": f"supervisor{i}", "full_name": f"Supervisor {i}",
+      "role": UserRole.supervisor, "branch": None}
+     for i in range(1, 3)]
+    +
+    # ── Cashiers (one per branch) ──
+    [{"username": f"cashier{i}", "full_name": f"Cashier {i}",
+      "role": UserRole.cashier, "branch": f"Branch {i}"}
+     for i in range(1, 8)]
+    +
+    # ── Riders ──
+    [{"username": f"rider{i:02d}", "full_name": f"Rider {i:02d}",
+      "role": UserRole.rider, "branch": None}
+     for i in range(1, 11)]
+)
 
 
 def seed_currencies(db):
@@ -86,7 +106,7 @@ def seed_currencies(db):
 def seed_admin(db):
     existing = db.query(User).filter_by(username=ADMIN_USER["username"]).first()
     if existing:
-        print(f"  Admin user '{ADMIN_USER['username']}' already exists — skipped")
+        print(f"  Admin '{ADMIN_USER['username']}' already exists — skipped")
         return
     db.add(User(
         username=ADMIN_USER["username"],
@@ -94,12 +114,33 @@ def seed_admin(db):
         email=ADMIN_USER["email"],
         password_hash=hash_password(ADMIN_USER["password"]),
         role=ADMIN_USER["role"],
+        branch=ADMIN_USER["branch"],
         is_active=True,
     ))
     db.commit()
-    print(f"  Admin user '{ADMIN_USER['username']}' created")
-    print(f"  Default password: {ADMIN_USER['password']}")
-    print(f"  *** Change this password immediately after first login ***")
+    print(f"  Admin '{ADMIN_USER['username']}' created — password: {ADMIN_USER['password']}")
+
+
+def seed_staff(db):
+    inserted = 0
+    skipped  = 0
+    for u in STAFF_USERS:
+        if db.query(User).filter_by(username=u["username"]).first():
+            skipped += 1
+            continue
+        db.add(User(
+            username=u["username"],
+            full_name=u["full_name"],
+            password_hash=hash_password(DEFAULT_PASSWORD),
+            role=u["role"],
+            branch=u.get("branch"),
+            is_active=True,
+        ))
+        inserted += 1
+    db.commit()
+    print(f"  Staff — inserted: {inserted}, skipped: {skipped}")
+    if inserted:
+        print(f"  Default password for all staff: {DEFAULT_PASSWORD}")
 
 
 def main():
@@ -108,6 +149,7 @@ def main():
     try:
         seed_currencies(db)
         seed_admin(db)
+        seed_staff(db)
         print("Done.")
     finally:
         db.close()
