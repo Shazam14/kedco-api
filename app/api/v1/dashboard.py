@@ -11,7 +11,7 @@ from app.api.v1.auth import get_current_user, TokenData
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
-OPENING_CAPITAL = 1_000_000  # TODO: move to DB config table
+OPENING_CAPITAL = 0  # TODO: move to DB config table — set by admin on first use
 
 
 @router.get("/summary", response_model=DashboardSummaryOut)

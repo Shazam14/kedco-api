@@ -11,6 +11,26 @@ from app.api.v1.auth import require_role, TokenData
 router = APIRouter(prefix="/rates", tags=["rates"])
 
 
+@router.get("/public")
+async def get_public_rates(db: Session = Depends(get_db)):
+    """Public endpoint — no auth required. Returns today's rates for display."""
+    today = date.today()
+    currencies = {c.code: c for c in db.query(Currency).filter_by(is_active="Y").all()}
+    rates = db.query(DailyRate).filter_by(date=today).all()
+    return [
+        {
+            "currency_code": r.currency_code,
+            "name": currencies[r.currency_code].name if r.currency_code in currencies else "",
+            "flag": currencies[r.currency_code].flag if r.currency_code in currencies else "",
+            "decimal_places": currencies[r.currency_code].decimal_places if r.currency_code in currencies else 4,
+            "buy_rate": r.buy_rate,
+            "sell_rate": r.sell_rate,
+        }
+        for r in rates
+        if r.currency_code in currencies
+    ]
+
+
 @router.get("/today")
 async def get_today_rates(
     current_user: TokenData = Depends(require_role("admin", "cashier")),

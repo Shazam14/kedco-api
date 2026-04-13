@@ -11,7 +11,7 @@ from app.api.v1.auth import require_role, TokenData
 
 router = APIRouter(prefix="/eod", tags=["end-of-day"])
 
-OPENING_CAPITAL = 1_000_000  # TODO: move to DB config
+OPENING_CAPITAL = 0  # TODO: move to DB config — set by admin on first use
 
 
 @router.post("/close")
