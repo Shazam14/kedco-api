@@ -82,7 +82,7 @@ async def close_day(
         carry_forward.append({
             "currency_code":  code,
             "carry_in_qty":   max(remaining_qty, 0),
-            "carry_in_rate":  rate_row.sell_rate,  # tomorrow's cost basis = today's closing sell rate
+            "carry_in_rate":  result.daily_avg_cost,  # tomorrow's cost basis = today's closing avg rate (confirmed by Ken 2026-04-13)
         })
 
     # ── 5. Write tomorrow's positions (upsert) ────────────────────────

@@ -49,7 +49,7 @@ def compute_position(
     """
     KEN'S AVERAGING RULE:
     - Averaging is PER DAY only.
-    - Yesterday's unsold stock enters today at yesterday's closing sell rate.
+    - Yesterday's unsold stock enters today at yesterday's closing avg rate (= daily_avg_cost, NOT sell rate).
     - Each buy today is blended WITH the carry-in.
     - daily_avg = (carry_qty × carry_rate + Σ(buy_qty × buy_rate))
                   ÷ (carry_qty + Σ buy_qty)
