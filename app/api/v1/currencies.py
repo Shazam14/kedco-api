@@ -16,7 +16,7 @@ async def list_currencies(
 ):
     """All active currencies with today's rates if already set."""
     today = date.today()
-    currencies = db.query(Currency).filter_by(is_active="Y").all()
+    currencies = db.query(Currency).filter_by(is_active="Y").order_by(Currency.sort_order).all()
     rates_today = {
         r.currency_code: r
         for r in db.query(DailyRate).filter_by(date=today).all()

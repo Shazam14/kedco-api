@@ -15,7 +15,7 @@ router = APIRouter(prefix="/rates", tags=["rates"])
 async def get_public_rates(db: Session = Depends(get_db)):
     """Public endpoint — no auth required. Returns today's rates for display."""
     today = date.today()
-    currencies = {c.code: c for c in db.query(Currency).filter_by(is_active="Y").all()}
+    currencies = {c.code: c for c in db.query(Currency).filter_by(is_active="Y").order_by(Currency.sort_order).all()}
     rates = db.query(DailyRate).filter_by(date=today).all()
     return [
         {

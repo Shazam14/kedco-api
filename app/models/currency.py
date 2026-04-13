@@ -22,7 +22,8 @@ class Currency(Base):
     name = Column(String(100), nullable=False)
     flag = Column(String(10), nullable=True)
     category = Column(Enum(CurrencyCategory), nullable=False)
-    decimal_places = Column(Integer, default=4)
+    decimal_places = Column(Integer, default=2)
+    sort_order = Column(Integer, default=99)
     is_active = Column(String(1), default="Y")
 
 

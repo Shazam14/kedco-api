@@ -25,7 +25,7 @@ async def get_today_positions(
     """Return today's opening positions for all active currencies."""
     today = date.today()
 
-    currencies = db.query(Currency).filter_by(is_active="Y").all()
+    currencies = db.query(Currency).filter_by(is_active="Y").order_by(Currency.sort_order).all()
     positions  = {
         p.currency_code: p
         for p in db.query(DailyPosition).filter_by(date=today).all()
