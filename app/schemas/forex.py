@@ -17,6 +17,8 @@ class TransactionIn(BaseModel):
     rate: float
     cashier: str
     customer: Optional[str] = None
+    payment_mode: Optional[str] = "CASH"
+    bank_id: Optional[int] = None
 
 
 class TransactionOut(BaseModel):
@@ -31,6 +33,8 @@ class TransactionOut(BaseModel):
     than: float
     cashier: str
     customer: Optional[str] = None
+    payment_mode: str = "CASH"
+    bank_id: Optional[int] = None
 
 
 class CurrencyPositionOut(BaseModel):

@@ -44,7 +44,7 @@ def _get_daily_avg(currency_code: str, today: date, db: Session) -> float:
 @router.post("/", response_model=TransactionOut, status_code=status.HTTP_201_CREATED)
 async def create_transaction(
     txn: TransactionIn,
-    current_user: TokenData = Depends(require_role("admin", "cashier")),
+    current_user: TokenData = Depends(require_role("admin", "cashier", "rider")),
     db: Session = Depends(get_db),
 ):
     today = date.today()
@@ -72,6 +72,8 @@ async def create_transaction(
         than=than,
         cashier=current_user.username,
         customer=txn.customer,
+        payment_mode=txn.payment_mode or "CASH",
+        bank_id=txn.bank_id,
     )
     db.add(record)
     db.commit()
@@ -89,12 +91,14 @@ async def create_transaction(
         than=record.than,
         cashier=record.cashier,
         customer=record.customer,
+        payment_mode=record.payment_mode,
+        bank_id=record.bank_id,
     )
 
 
 @router.get("/today", response_model=list[TransactionOut])
 async def get_today_transactions(
-    current_user: TokenData = Depends(require_role("admin", "cashier")),
+    current_user: TokenData = Depends(require_role("admin", "cashier", "rider")),
     db: Session = Depends(get_db),
 ):
     rows = db.query(Transaction).filter_by(date=date.today()).order_by(
@@ -106,6 +110,7 @@ async def get_today_transactions(
             currency=r.currency_code, foreign_amt=r.foreign_amt,
             rate=r.rate, php_amt=r.php_amt, than=r.than,
             cashier=r.cashier, customer=r.customer,
+            payment_mode=r.payment_mode, bank_id=r.bank_id,
         )
         for r in rows
     ]

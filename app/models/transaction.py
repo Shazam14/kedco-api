@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Float, Date, DateTime, Enum, ForeignKey
+from sqlalchemy import Column, String, Float, Date, DateTime, Enum, ForeignKey, Integer
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 import uuid
@@ -15,6 +15,21 @@ class TxnType(str, enum.Enum):
 class TxnSource(str, enum.Enum):
     COUNTER = "COUNTER"
     RIDER = "RIDER"
+
+
+class PaymentMode(str, enum.Enum):
+    CASH          = "CASH"
+    GCASH         = "GCASH"
+    MAYA          = "MAYA"
+    SHOPEEPAY     = "SHOPEEPAY"
+    BANK_TRANSFER = "BANK_TRANSFER"
+    CHEQUE        = "CHEQUE"
+    OTHER         = "OTHER"
+
+
+class PaymentStatus(str, enum.Enum):
+    RECEIVED = "RECEIVED"
+    PENDING  = "PENDING"
 
 
 class Transaction(Base):
@@ -37,23 +52,56 @@ class Transaction(Base):
     than = Column(Float, default=0)                     # (rate − avg) × qty, 0 for buys
     cashier = Column(String(50), nullable=False)
     customer = Column(String(100), nullable=True)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    payment_mode   = Column(Enum(PaymentMode), default=PaymentMode.CASH, nullable=False)
+    bank_id        = Column(Integer, ForeignKey("banks.id"), nullable=True)
+    payment_status = Column(Enum(PaymentStatus), default=PaymentStatus.RECEIVED, nullable=False)
+    confirmed_by   = Column(String(50), nullable=True)   # admin who confirmed pending payment
+    confirmed_at   = Column(DateTime(timezone=True), nullable=True)
+    created_at     = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class DispatchStatus(str, enum.Enum):
+    IN_FIELD = "IN_FIELD"
+    RETURNED = "RETURNED"
+    OFF      = "OFF"
 
 
 class RiderDispatch(Base):
     """
-    Tracks riders dispatched with cash and foreign currency stock.
+    Tracks riders dispatched with starting PHP cash.
+    One row per rider per dispatch (a rider may be dispatched multiple times a day).
     """
     __tablename__ = "rider_dispatches"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    date = Column(Date, nullable=False, index=True)
-    rider_name = Column(String(100), nullable=False)
-    status = Column(String(20), default="IN_FIELD")    # IN_FIELD, RETURNED, OFF
+    id            = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    date          = Column(Date, nullable=False, index=True)
+    rider_username= Column(String(50), nullable=False, index=True)
+    rider_name    = Column(String(100), nullable=False)
+    status        = Column(Enum(DispatchStatus), default=DispatchStatus.IN_FIELD, nullable=False)
     dispatch_time = Column(String(10), nullable=True)
-    cash_php = Column(Float, default=0)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    return_time   = Column(String(10), nullable=True)
+    cash_php      = Column(Float, default=0)
+    notes         = Column(String(200), nullable=True)
+    dispatched_by = Column(String(50), nullable=True)
+    created_at    = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at    = Column(DateTime(timezone=True), onupdate=func.now())
+
+
+class RiderBorrow(Base):
+    """
+    Cash borrowed by a rider from a branch or another rider while in the field.
+    Must be returned and reconciled.
+    """
+    __tablename__ = "rider_borrows"
+
+    id          = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    dispatch_id = Column(UUID(as_uuid=True), ForeignKey("rider_dispatches.id"), nullable=False)
+    source_type = Column(String(10), nullable=False)   # BRANCH | RIDER
+    source_name = Column(String(100), nullable=False)  # branch name or rider username
+    amount_php  = Column(Float, nullable=False)
+    is_returned = Column(String(1), default="N")       # Y / N
+    notes       = Column(String(200), nullable=True)
+    created_at  = Column(DateTime(timezone=True), server_default=func.now())
 
 
 class DailySummary(Base):
