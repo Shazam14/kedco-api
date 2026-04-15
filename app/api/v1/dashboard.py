@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends
+from sqlalchemy import func
 from sqlalchemy.orm import Session
-from datetime import date
+from datetime import date, datetime
 
 from app.core.database import get_db
 from app.models.currency import Currency, DailyRate, DailyPosition
@@ -14,6 +15,27 @@ router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
 OPENING_CAPITAL = 0  # TODO: move to DB config table — set by admin on first use
 
+# ── Simple 30-second in-memory cache ─────────────────────────────────────────
+_cache: dict = {}
+_CACHE_TTL = 30  # seconds
+
+
+def _cache_key(today: date) -> str:
+    return f"dashboard:{today}"
+
+
+def _get_cached(key: str):
+    entry = _cache.get(key)
+    if entry and (datetime.utcnow() - entry["ts"]).total_seconds() < _CACHE_TTL:
+        return entry["data"]
+    return None
+
+
+def _set_cached(key: str, data) -> None:
+    _cache[key] = {"ts": datetime.utcnow(), "data": data}
+
+
+# ── Route ─────────────────────────────────────────────────────────────────────
 
 @router.get("/summary", response_model=DashboardSummaryOut)
 async def get_dashboard_summary(
@@ -21,6 +43,11 @@ async def get_dashboard_summary(
     db: Session = Depends(get_db),
 ):
     today = date.today()
+    cache_key = _cache_key(today)
+
+    cached = _get_cached(cache_key)
+    if cached:
+        return cached
 
     # 1. All active currencies
     currencies = db.query(Currency).filter_by(is_active="Y").all()
@@ -37,8 +64,10 @@ async def get_dashboard_summary(
         for p in db.query(DailyPosition).filter_by(date=today).all()
     }
 
-    # 4. All buys today (exclude demo accounts from capital/position calculations)
+    # 4. Exclude demo accounts from all calculations
     demo_users = db.query(User.username).filter(User.is_demo == True).scalar_subquery()
+
+    # 5. All buys today — used for position computation
     buys_today = (
         db.query(Transaction)
         .filter(Transaction.date == today, Transaction.type == "BUY")
@@ -49,12 +78,24 @@ async def get_dashboard_summary(
     for t in buys_today:
         buys_by_currency.setdefault(t.currency_code, []).append(t)
 
-    # 5. Compute positions for currencies that have a rate set today
+    # 6. Aggregate totals across ALL transactions today (not just display limit)
+    #    Uses the composite index on (date, type) for each filter.
+    sells_today = (
+        db.query(Transaction)
+        .filter(Transaction.date == today, Transaction.type == "SELL")
+        .filter(~Transaction.cashier.in_(demo_users))
+        .all()
+    )
+    total_than   = sum(t.than    for t in sells_today)
+    total_bought = sum(t.php_amt for t in buys_today)
+    total_sold   = sum(t.php_amt for t in sells_today)
+
+    # 7. Compute positions for currencies that have a rate set today
     computed_positions: list[CurrencyPositionOut] = []
     for curr in currencies:
         rate_row = rates.get(curr.code)
         if not rate_row:
-            continue  # skip currencies with no rate set today
+            continue
 
         pos_row = positions_map.get(curr.code)
         carry_in = CarryIn(
@@ -83,10 +124,11 @@ async def get_dashboard_summary(
             unrealized_php=result.unrealized_php,
         ))
 
-    # 6. Recent transactions (last 20)
+    # 8. Recent transactions — display only, limited to 20
     recent_txns = (
         db.query(Transaction)
-        .filter_by(date=today)
+        .filter(Transaction.date == today)
+        .filter(~Transaction.cashier.in_(demo_users))
         .order_by(Transaction.created_at.desc())
         .limit(20)
         .all()
@@ -101,14 +143,10 @@ async def get_dashboard_summary(
         for t in recent_txns
     ]
 
-    # 7. Aggregates
     total_stock = sum(p.stock_value_php for p in computed_positions)
-    php_cash = OPENING_CAPITAL  # TODO: track actual cash movements
-    total_than = sum(t.than for t in recent_txns if t.type == "SELL")
-    total_bought = sum(t.php_amt for t in recent_txns if t.type == "BUY")
-    total_sold = sum(t.php_amt for t in recent_txns if t.type == "SELL")
+    php_cash    = OPENING_CAPITAL  # TODO: track actual cash movements
 
-    return DashboardSummaryOut(
+    result_out = DashboardSummaryOut(
         date=today,
         opening_capital=OPENING_CAPITAL,
         php_cash=php_cash,
@@ -121,3 +159,6 @@ async def get_dashboard_summary(
         positions=computed_positions,
         recent_transactions=recent_out,
     )
+
+    _set_cached(cache_key, result_out)
+    return result_out
