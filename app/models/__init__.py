@@ -3,3 +3,4 @@ from app.models.user import User
 from app.models.currency import Currency, DailyRate, DailyPosition
 from app.models.transaction import Transaction, RiderDispatch, DailySummary
 from app.models.bank import Bank
+from app.models.shift import TellerShift
