@@ -146,7 +146,12 @@ async def get_today_shifts(
     current_user: TokenData = Depends(require_role("admin", "supervisor")),
     db: Session = Depends(get_db),
 ):
-    shifts = db.query(TellerShift).filter_by(date=date.today()).order_by(
-        TellerShift.opened_at
-    ).all()
+    demo_users = db.query(User.username).filter(User.is_demo == True).scalar_subquery()
+    shifts = (
+        db.query(TellerShift)
+        .filter(TellerShift.date == date.today())
+        .filter(~TellerShift.cashier.in_(demo_users))
+        .order_by(TellerShift.opened_at)
+        .all()
+    )
     return [_shift_to_out(s, db) for s in shifts]

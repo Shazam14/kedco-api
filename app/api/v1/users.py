@@ -15,6 +15,7 @@ class UserUpdateIn(BaseModel):
     full_name: Optional[str] = None
     branch:    Optional[str] = None
     is_active: Optional[bool] = None
+    is_demo:   Optional[bool] = None
 
 
 class PasswordResetIn(BaseModel):
@@ -29,6 +30,7 @@ def _user_out(u: User) -> dict:
         "role":      u.role.value,
         "branch":    u.branch,
         "is_active": u.is_active,
+        "is_demo":   u.is_demo,
     }
 
 
@@ -60,6 +62,8 @@ async def update_user(
         user.branch = payload.branch
     if payload.is_active is not None:
         user.is_active = payload.is_active
+    if payload.is_demo is not None:
+        user.is_demo = payload.is_demo
 
     db.commit()
     return _user_out(user)

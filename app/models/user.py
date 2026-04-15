@@ -25,5 +25,6 @@ class User(Base):
     role = Column(Enum(UserRole), nullable=False, default=UserRole.cashier)
     branch = Column(String(100), nullable=True)   # e.g. "Branch 1", "Main", etc.
     is_active = Column(Boolean, default=True)
+    is_demo   = Column(Boolean, default=False, nullable=False, server_default='false')
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())

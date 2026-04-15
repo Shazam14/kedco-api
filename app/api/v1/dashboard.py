@@ -5,6 +5,7 @@ from datetime import date
 from app.core.database import get_db
 from app.models.currency import Currency, DailyRate, DailyPosition
 from app.models.transaction import Transaction
+from app.models.user import User
 from app.schemas.forex import DashboardSummaryOut, CurrencyPositionOut, TransactionOut
 from app.services.forex import compute_position, CarryIn, TodayBuy
 from app.api.v1.auth import get_current_user, TokenData
@@ -36,8 +37,14 @@ async def get_dashboard_summary(
         for p in db.query(DailyPosition).filter_by(date=today).all()
     }
 
-    # 4. All buys today (for weighted avg calculation)
-    buys_today = db.query(Transaction).filter_by(date=today, type="BUY").all()
+    # 4. All buys today (exclude demo accounts from capital/position calculations)
+    demo_users = db.query(User.username).filter(User.is_demo == True).scalar_subquery()
+    buys_today = (
+        db.query(Transaction)
+        .filter(Transaction.date == today, Transaction.type == "BUY")
+        .filter(~Transaction.cashier.in_(demo_users))
+        .all()
+    )
     buys_by_currency: dict[str, list[Transaction]] = {}
     for t in buys_today:
         buys_by_currency.setdefault(t.currency_code, []).append(t)

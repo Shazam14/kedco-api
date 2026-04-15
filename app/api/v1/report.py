@@ -6,6 +6,7 @@ from typing import Optional
 from app.core.database import get_db
 from app.models.transaction import Transaction
 from app.models.currency import Currency
+from app.models.user import User
 from app.api.v1.auth import require_role, TokenData
 
 router = APIRouter(prefix="/report", tags=["report"])
@@ -24,9 +25,11 @@ async def get_daily_report(
     """
     target = report_date or date_type.today()
 
+    demo_users = db.query(User.username).filter(User.is_demo == True).scalar_subquery()
     txns = (
         db.query(Transaction)
-        .filter_by(date=target)
+        .filter(Transaction.date == target)
+        .filter(~Transaction.cashier.in_(demo_users))
         .order_by(Transaction.created_at)
         .all()
     )

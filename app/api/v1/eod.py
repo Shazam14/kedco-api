@@ -6,6 +6,7 @@ from datetime import date, timedelta
 from app.core.database import get_db
 from app.models.currency import DailyRate, DailyPosition
 from app.models.transaction import Transaction, DailySummary
+from app.models.user import User
 from app.services.forex import compute_position, CarryIn, TodayBuy
 from app.api.v1.auth import require_role, TokenData
 
@@ -47,8 +48,14 @@ async def close_day(
         for p in db.query(DailyPosition).filter_by(date=today).all()
     }
 
-    # ── 3. Get today's transactions per currency ──────────────────────
-    txns_today = db.query(Transaction).filter_by(date=today).all()
+    # ── 3. Get today's transactions per currency (exclude demo accounts) ─
+    demo_users = db.query(User.username).filter(User.is_demo == True).scalar_subquery()
+    txns_today = (
+        db.query(Transaction)
+        .filter(Transaction.date == today)
+        .filter(~Transaction.cashier.in_(demo_users))
+        .all()
+    )
 
     bought_by_currency: dict[str, list[Transaction]] = {}
     sold_by_currency:   dict[str, list[Transaction]] = {}
