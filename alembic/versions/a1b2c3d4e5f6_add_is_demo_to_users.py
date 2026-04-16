@@ -9,8 +9,6 @@ from typing import Sequence, Union
 
 from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.orm import Session
-from sqlalchemy import table, column, String, Boolean
 
 
 revision: str = 'a1b2c3d4e5f6'
@@ -41,34 +39,27 @@ def upgrade() -> None:
 
     # ── 2. Seed demo accounts ───────────────────────────────────────────────
     bind = op.get_bind()
-    session = Session(bind=bind)
-
-    users_t = table(
-        "users",
-        column("username", String),
-        column("full_name", String),
-        column("password_hash", String),
-        column("role", String),
-        column("is_active", Boolean),
-        column("is_demo", Boolean),
-    )
-
     for u in DEMO_USERS:
-        exists = session.execute(
+        exists = bind.execute(
             sa.text("SELECT 1 FROM users WHERE username = :username"),
             {"username": u["username"]},
         ).fetchone()
         if not exists:
-            op.bulk_insert(users_t, [{
-                "username":      u["username"],
-                "full_name":     u["full_name"],
-                "password_hash": DEMO_PASSWORD_HASH,
-                "role":          u["role"],
-                "is_active":     True,
-                "is_demo":       True,
-            }])
-
-    session.close()
+            import uuid as _uuid
+            bind.execute(
+                sa.text(
+                    f"INSERT INTO users (id, username, full_name, password_hash, role, is_active, is_demo) "
+                    f"VALUES (:id, :username, :full_name, :password_hash, '{u['role']}'::userrole, :is_active, :is_demo)"
+                ),
+                {
+                    "id":            str(_uuid.uuid4()),
+                    "username":      u["username"],
+                    "full_name":     u["full_name"],
+                    "password_hash": DEMO_PASSWORD_HASH,
+                    "is_active":     True,
+                    "is_demo":       True,
+                },
+            )
 
 
 def downgrade() -> None:

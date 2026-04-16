@@ -7,6 +7,7 @@ from app.core.database import get_db
 from app.models.transaction import Transaction
 from app.models.currency import Currency
 from app.models.user import User
+from app.models.credit import SpecialCredit, CreditInstallment, CreditStatus
 from app.api.v1.auth import require_role, TokenData
 
 router = APIRouter(prefix="/report", tags=["report"])
@@ -93,6 +94,52 @@ async def get_daily_report(
     total_sold   = sum(t.php_amt for t in txns if t.type == "SELL")
     total_than   = sum(t.than   for t in txns)
 
+    # ── Special credits ──────────────────────────────────────────────────────
+    # Disbursements: credits given out today
+    credits_today = (
+        db.query(SpecialCredit)
+        .filter(SpecialCredit.disbursed_date == target)
+        .filter(SpecialCredit.status != CreditStatus.CANCELLED)
+        .all()
+    )
+    # Payments received: installments marked paid today
+    payments_today = (
+        db.query(CreditInstallment)
+        .filter(CreditInstallment.paid_at == target)
+        .all()
+    )
+    # Enrich payments with credit info for display
+    credit_map = {str(c.id): c for c in db.query(SpecialCredit).all()}
+    credit_disbursements = [
+        {
+            "id":            str(c.id),
+            "customer_name": c.customer_name,
+            "currency_code": c.currency_code,
+            "principal":     c.principal,
+            "interest":      c.interest,
+            "credit_type":   c.credit_type.value,
+            # UPFRONT: cash out = principal - interest (interest kept); INSTALLMENT: cash out = principal
+            "cash_out":      round(c.principal - c.interest, 2) if c.credit_type.value == "UPFRONT" else round(c.principal, 2),
+        }
+        for c in credits_today
+    ]
+    credit_payments = [
+        {
+            "installment_id": str(p.id),
+            "credit_id":      str(p.credit_id),
+            "customer_name":  credit_map[str(p.credit_id)].customer_name if str(p.credit_id) in credit_map else "",
+            "currency_code":  credit_map[str(p.credit_id)].currency_code if str(p.credit_id) in credit_map else "",
+            "installment_no": p.installment_no,
+            "amount":         p.amount,
+            "received_by":    p.received_by,
+        }
+        for p in payments_today
+    ]
+    total_credit_cash_out  = round(sum(d["cash_out"]  for d in credit_disbursements), 2)
+    total_credit_cash_in   = round(sum(p["amount"]    for p in credit_payments), 2)
+    # Interest income: from UPFRONT credits disbursed today + interest portion of fully paid INSTALLMENT credits
+    interest_income_today  = round(sum(c.interest for c in credits_today if c.credit_type.value == "UPFRONT"), 2)
+
     return {
         "date":               str(target),
         "generated_at":       datetime.now().strftime("%I:%M %p"),
@@ -102,6 +149,13 @@ async def get_daily_report(
         "total_than":         round(total_than,   2),
         "by_currency":        sorted_currencies,
         "by_cashier":         sorted(by_cashier.values(), key=lambda x: x["cashier"]),
+        "special_credits": {
+            "disbursements":       credit_disbursements,
+            "payments":            credit_payments,
+            "total_cash_out":      total_credit_cash_out,
+            "total_cash_in":       total_credit_cash_in,
+            "interest_income":     interest_income_today,
+        },
         "transactions": [
             {
                 "id":          t.id,
