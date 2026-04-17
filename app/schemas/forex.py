@@ -52,6 +52,13 @@ class CurrencyPositionOut(BaseModel):
     unrealized_php: float
 
 
+class TransactionPatch(BaseModel):
+    customer:     Optional[str]   = None
+    payment_mode: Optional[str]   = None
+    rate:         Optional[float] = None
+    foreign_amt:  Optional[float] = None
+
+
 class DashboardSummaryOut(BaseModel):
     date: date
     opening_capital: float

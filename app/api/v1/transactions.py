@@ -5,8 +5,9 @@ import uuid
 
 from app.core.database import get_db
 from app.models.transaction import Transaction
+from app.models.audit import AuditLog
 from app.models.currency import DailyRate, DailyPosition
-from app.schemas.forex import TransactionIn, TransactionOut
+from app.schemas.forex import TransactionIn, TransactionOut, TransactionPatch
 from app.services.forex import compute_position, CarryIn, TodayBuy
 from app.api.v1.auth import require_role, TokenData
 
@@ -114,3 +115,70 @@ async def get_today_transactions(
         )
         for r in rows
     ]
+
+
+@router.patch("/{txn_id}", response_model=TransactionOut)
+async def edit_transaction(
+    txn_id: str,
+    patch: TransactionPatch,
+    current_user: TokenData = Depends(require_role("admin")),
+    db: Session = Depends(get_db),
+):
+    record = db.query(Transaction).filter_by(id=txn_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    if record.date != date.today():
+        raise HTTPException(status_code=403, detail="Only same-day transactions can be edited")
+
+    old_snapshot = {
+        "customer":     record.customer,
+        "payment_mode": str(record.payment_mode),
+        "rate":         record.rate,
+        "foreign_amt":  record.foreign_amt,
+        "php_amt":      record.php_amt,
+        "than":         record.than,
+    }
+
+    if patch.customer is not None:
+        record.customer = patch.customer or None
+    if patch.payment_mode is not None:
+        record.payment_mode = patch.payment_mode
+    if patch.rate is not None:
+        record.rate = patch.rate
+    if patch.foreign_amt is not None:
+        record.foreign_amt = patch.foreign_amt
+
+    # Recompute derived fields whenever rate or foreign_amt changed
+    if patch.rate is not None or patch.foreign_amt is not None:
+        record.php_amt = round(record.foreign_amt * record.rate, 2)
+        if str(record.type) == "SELL":
+            record.than = round((record.rate - record.daily_avg_cost) * record.foreign_amt, 2)
+
+    new_snapshot = {
+        "customer":     record.customer,
+        "payment_mode": str(record.payment_mode),
+        "rate":         record.rate,
+        "foreign_amt":  record.foreign_amt,
+        "php_amt":      record.php_amt,
+        "than":         record.than,
+    }
+
+    db.add(AuditLog(
+        id=uuid.uuid4(),
+        table_name="transactions",
+        record_id=txn_id,
+        action="UPDATE",
+        changed_by=current_user.username,
+        old_value=old_snapshot,
+        new_value=new_snapshot,
+    ))
+    db.commit()
+    db.refresh(record)
+
+    return TransactionOut(
+        id=record.id, time=record.time, type=record.type, source=record.source,
+        currency=record.currency_code, foreign_amt=record.foreign_amt,
+        rate=record.rate, php_amt=record.php_amt, than=record.than,
+        cashier=record.cashier, customer=record.customer,
+        payment_mode=record.payment_mode, bank_id=record.bank_id,
+    )
