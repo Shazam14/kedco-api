@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Float, Date, DateTime, Integer, Enum, ForeignKey
+from sqlalchemy import Column, String, Float, Date, DateTime, Integer, Enum, ForeignKey, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 import uuid
@@ -39,6 +39,33 @@ class SpecialCredit(Base):
     created_by    = Column(String(50), nullable=False)           # admin username
     created_at    = Column(DateTime(timezone=True), server_default=func.now())
     updated_at    = Column(DateTime(timezone=True), onupdate=func.now())
+
+
+class CreditDraw(Base):
+    """
+    An additional draw (top-up borrow) against an active SpecialCredit.
+    Customers may draw again after the configured cooldown period.
+    """
+    __tablename__ = "credit_draws"
+
+    id         = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    credit_id  = Column(UUID(as_uuid=True), ForeignKey("special_credits.id"), nullable=False, index=True)
+    amount     = Column(Float, nullable=False)
+    notes      = Column(String(300), nullable=True)
+    created_by = Column(String(50), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class AppSetting(Base):
+    """
+    Key/value store for admin-configurable application settings.
+    """
+    __tablename__ = "app_settings"
+
+    key        = Column(String(100), primary_key=True)
+    value      = Column(Text, nullable=False)
+    updated_by = Column(String(50), nullable=True)
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
 
 class CreditInstallment(Base):
