@@ -3,34 +3,34 @@ from sqlalchemy.orm import Session
 from datetime import datetime, date
 
 from app.core.database import get_db
-from app.models.shift import TellerShift, ShiftStatus
+from app.models.shift import TellerShift, ShiftStatus, CashReplenishment
 from app.models.transaction import Transaction
 from app.models.user import User
-from app.schemas.shift import ShiftOpenIn, ShiftCloseIn, ShiftOut
+from app.schemas.shift import ShiftOpenIn, ShiftCloseIn, ReplenishIn, ShiftOut, ReplenishmentOut
 from app.api.v1.auth import require_role, TokenData
 from app.core.today import get_today
 
 router = APIRouter(prefix="/shifts", tags=["shifts"])
 
 
+def _comm(t):
+    if not t.official_rate:
+        return 0.0
+    return (t.rate - t.official_rate) * t.foreign_amt if str(t.type) == "SELL" \
+        else (t.official_rate - t.rate) * t.foreign_amt
+
+
 def _shift_to_out(shift: TellerShift, db: Session) -> ShiftOut:
-    """Convert a TellerShift row to ShiftOut, computing transaction summary."""
     txns = db.query(Transaction).filter_by(
         date=shift.date,
         cashier=shift.cashier,
     ).all()
 
-    total_sold   = sum(t.php_amt for t in txns if t.type == "SELL")
-    total_bought = sum(t.php_amt for t in txns if t.type == "BUY")
-    total_than   = sum(t.than for t in txns)
-
-    def _comm(t):
-        if not t.official_rate:
-            return 0.0
-        return (t.rate - t.official_rate) * t.foreign_amt if str(t.type) == "SELL" \
-            else (t.official_rate - t.rate) * t.foreign_amt
-
+    total_sold       = sum(t.php_amt for t in txns if t.type == "SELL")
+    total_bought     = sum(t.php_amt for t in txns if t.type == "BUY")
+    total_than       = sum(t.than for t in txns)
     total_commission = sum(_comm(t) for t in txns)
+    total_replenishment = sum(r.amount_php for r in shift.replenishments)
 
     return ShiftOut(
         id=str(shift.id),
@@ -50,6 +50,11 @@ def _shift_to_out(shift: TellerShift, db: Session) -> ShiftOut:
         total_bought_php=round(total_bought, 2),
         total_than=round(total_than, 2),
         total_commission=round(total_commission, 2),
+        total_replenishment_php=round(total_replenishment, 2),
+        replenishments=[
+            ReplenishmentOut(id=str(r.id), amount_php=r.amount_php, note=r.note, added_at=r.added_at)
+            for r in shift.replenishments
+        ],
     )
 
 
@@ -61,7 +66,6 @@ async def open_shift(
 ):
     today = get_today()
 
-    # Block if cashier already has an open shift today
     existing = db.query(TellerShift).filter_by(
         cashier=current_user.username,
         date=today,
@@ -91,6 +95,34 @@ async def open_shift(
     return _shift_to_out(shift, db)
 
 
+@router.post("/replenish", response_model=ShiftOut)
+async def replenish_cash(
+    body: ReplenishIn,
+    current_user: TokenData = Depends(require_role("admin", "cashier", "supervisor")),
+    db: Session = Depends(get_db),
+):
+    today = get_today()
+
+    shift = db.query(TellerShift).filter_by(
+        cashier=current_user.username,
+        date=today,
+        status=ShiftStatus.OPEN,
+    ).first()
+    if not shift:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No open shift found for today.")
+
+    replenishment = CashReplenishment(
+        shift_id=shift.id,
+        amount_php=body.amount_php,
+        note=body.note,
+    )
+    db.add(replenishment)
+    db.commit()
+    db.refresh(shift)
+
+    return _shift_to_out(shift, db)
+
+
 @router.post("/close", response_model=ShiftOut)
 async def close_shift(
     body: ShiftCloseIn,
@@ -105,29 +137,18 @@ async def close_shift(
         status=ShiftStatus.OPEN,
     ).first()
     if not shift:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="No open shift found for today.",
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No open shift found for today.")
 
-    # Compute expected cash:
-    # opening_cash + PHP received from SELLs - PHP paid out for BUYs - commission
-    # Commission is remitted separately, so it's excluded from the cashier's float.
     txns = db.query(Transaction).filter_by(
         date=today,
         cashier=current_user.username,
     ).all()
-    total_sold   = sum(t.php_amt for t in txns if t.type == "SELL")
-    total_bought = sum(t.php_amt for t in txns if t.type == "BUY")
-
-    def _comm(t):
-        if not t.official_rate:
-            return 0.0
-        return (t.rate - t.official_rate) * t.foreign_amt if str(t.type) == "SELL" \
-            else (t.official_rate - t.rate) * t.foreign_amt
-
+    total_sold       = sum(t.php_amt for t in txns if t.type == "SELL")
+    total_bought     = sum(t.php_amt for t in txns if t.type == "BUY")
     total_commission = sum(_comm(t) for t in txns)
-    expected = round(shift.opening_cash_php + total_sold - total_bought - total_commission, 2)
+    total_replenishment = sum(r.amount_php for r in shift.replenishments)
+
+    expected = round(shift.opening_cash_php + total_sold - total_bought - total_commission + total_replenishment, 2)
     variance = round(body.closing_cash_php - expected, 2)
 
     shift.status            = ShiftStatus.CLOSED

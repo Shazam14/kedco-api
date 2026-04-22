@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 from datetime import date, datetime
 
 
@@ -11,6 +11,18 @@ class ShiftOpenIn(BaseModel):
 class ShiftCloseIn(BaseModel):
     closing_cash_php: float
     notes: Optional[str] = None
+
+
+class ReplenishIn(BaseModel):
+    amount_php: float
+    note: Optional[str] = None
+
+
+class ReplenishmentOut(BaseModel):
+    id: str
+    amount_php: float
+    note: Optional[str] = None
+    added_at: datetime
 
 
 class ShiftOut(BaseModel):
@@ -26,9 +38,12 @@ class ShiftOut(BaseModel):
     expected_cash_php: Optional[float] = None
     cash_variance: Optional[float] = None
     notes: Optional[str] = None
-    # summary fields (populated on close or GET active)
+    # summary fields
     txn_count: Optional[int] = None
     total_sold_php: Optional[float] = None
     total_bought_php: Optional[float] = None
     total_than: Optional[float] = None
     total_commission: Optional[float] = None
+    # replenishments
+    total_replenishment_php: Optional[float] = None
+    replenishments: Optional[List[ReplenishmentOut]] = None

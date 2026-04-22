@@ -1,6 +1,7 @@
-from sqlalchemy import Column, String, Float, Date, DateTime, Enum, Boolean
+from sqlalchemy import Column, String, Float, Date, DateTime, Enum, Boolean, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
+from sqlalchemy.orm import relationship
 import uuid
 import enum
 
@@ -33,3 +34,15 @@ class TellerShift(Base):
     cash_variance     = Column(Float, nullable=True)            # closing_cash - expected_cash
     notes             = Column(String(300), nullable=True)
     created_at        = Column(DateTime(timezone=True), server_default=func.now())
+    replenishments    = relationship("CashReplenishment", back_populates="shift", order_by="CashReplenishment.added_at")
+
+
+class CashReplenishment(Base):
+    __tablename__ = "cash_replenishments"
+
+    id         = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    shift_id   = Column(UUID(as_uuid=True), ForeignKey("teller_shifts.id", ondelete="CASCADE"), nullable=False, index=True)
+    amount_php = Column(Float, nullable=False)
+    note       = Column(String(300), nullable=True)
+    added_at   = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    shift      = relationship("TellerShift", back_populates="replenishments")
