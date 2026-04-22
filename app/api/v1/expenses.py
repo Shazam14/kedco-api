@@ -58,7 +58,7 @@ async def get_categories():
 
 @router.get("/today", response_model=list[ExpenseOut])
 async def get_today_expenses(
-    current_user: TokenData = Depends(require_role("admin", "supervisor")),
+    current_user: TokenData = Depends(require_role("admin", "cashier", "supervisor")),
     db: Session = Depends(get_db),
 ):
     rows = db.query(Expense).filter(Expense.date == get_today()).order_by(Expense.created_at.desc()).all()
@@ -68,7 +68,7 @@ async def get_today_expenses(
 @router.post("/", response_model=ExpenseOut, status_code=201)
 async def create_expense(
     body: ExpenseIn,
-    current_user: TokenData = Depends(require_role("admin", "supervisor")),
+    current_user: TokenData = Depends(require_role("admin", "cashier", "supervisor")),
     db: Session = Depends(get_db),
 ):
     if body.category not in EXPENSE_CATEGORIES:
@@ -78,8 +78,6 @@ async def create_expense(
     if body.amount_php <= 0:
         raise HTTPException(status_code=400, detail="Amount must be positive")
 
-    # Admin-created expenses are auto-approved; supervisor-created are pending
-    is_admin = current_user.role == "admin"
     expense = Expense(
         id=str(uuid.uuid4()),
         date=get_today(),
@@ -87,9 +85,9 @@ async def create_expense(
         category=body.category,
         description=body.description or None,
         recorded_by=current_user.username,
-        status="APPROVED" if is_admin else "PENDING",
-        approved_by=current_user.username if is_admin else None,
-        approved_at=datetime.now(timezone.utc) if is_admin else None,
+        status="APPROVED",
+        approved_by=current_user.username,
+        approved_at=datetime.now(timezone.utc),
     )
     db.add(expense)
     db.commit()
@@ -101,7 +99,7 @@ async def create_expense(
 async def edit_expense(
     expense_id: str,
     body: ExpensePatch,
-    current_user: TokenData = Depends(require_role("admin", "supervisor")),
+    current_user: TokenData = Depends(require_role("admin", "cashier", "supervisor")),
     db: Session = Depends(get_db),
 ):
     expense = db.query(Expense).filter_by(id=expense_id).first()
@@ -123,11 +121,6 @@ async def edit_expense(
 
     if expense.category == "OTHERS" and not (expense.description or "").strip():
         raise HTTPException(status_code=400, detail="Description is required when category is OTHERS")
-
-    # Any edit resets to PENDING (needs re-approval)
-    expense.status = "PENDING"
-    expense.approved_by = None
-    expense.approved_at = None
 
     db.commit()
     db.refresh(expense)
