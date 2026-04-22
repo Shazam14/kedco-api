@@ -111,14 +111,23 @@ async def close_shift(
         )
 
     # Compute expected cash:
-    # opening_cash + PHP received from SELLs - PHP paid out for BUYs
+    # opening_cash + PHP received from SELLs - PHP paid out for BUYs - commission
+    # Commission is remitted separately, so it's excluded from the cashier's float.
     txns = db.query(Transaction).filter_by(
         date=today,
         cashier=current_user.username,
     ).all()
     total_sold   = sum(t.php_amt for t in txns if t.type == "SELL")
     total_bought = sum(t.php_amt for t in txns if t.type == "BUY")
-    expected = round(shift.opening_cash_php + total_sold - total_bought, 2)
+
+    def _comm(t):
+        if not t.official_rate:
+            return 0.0
+        return (t.rate - t.official_rate) * t.foreign_amt if str(t.type) == "SELL" \
+            else (t.official_rate - t.rate) * t.foreign_amt
+
+    total_commission = sum(_comm(t) for t in txns)
+    expected = round(shift.opening_cash_php + total_sold - total_bought - total_commission, 2)
     variance = round(body.closing_cash_php - expected, 2)
 
     shift.status            = ShiftStatus.CLOSED
