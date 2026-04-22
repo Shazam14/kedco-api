@@ -6,3 +6,4 @@ from app.models.bank import Bank
 from app.models.shift import TellerShift
 from app.models.credit import SpecialCredit, CreditInstallment
 from app.models.passbook import PassbookEntry
+from app.models.expense import Expense
