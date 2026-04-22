@@ -66,6 +66,7 @@ class TransactionPatch(BaseModel):
     bank_id:        Optional[int]   = None
     rate:           Optional[float] = None
     foreign_amt:    Optional[float] = None
+    official_rate:  Optional[float] = None
     referrer:       Optional[str]   = None
     payment_tag:    Optional[str]   = None
     reference_date: Optional[date]  = None

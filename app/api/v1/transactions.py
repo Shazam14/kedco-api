@@ -175,6 +175,8 @@ async def edit_transaction(
         record.payment_tag = patch.payment_tag or None
     if patch.reference_date is not None:
         record.reference_date = patch.reference_date
+    if patch.official_rate is not None:
+        record.official_rate = patch.official_rate or None
     if patch.rate is not None:
         record.rate = patch.rate
     if patch.foreign_amt is not None:
