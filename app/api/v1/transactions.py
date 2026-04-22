@@ -56,6 +56,12 @@ async def create_transaction(
     php_amt = round(txn.foreign_amt * txn.rate, 2)
     than = round((txn.rate - daily_avg) * txn.foreign_amt, 2) if txn.type == "SELL" else 0.0
 
+    # Capture official (admin-set) rate at time of transaction
+    rate_row = db.query(DailyRate).filter_by(date=today, currency_code=txn.currency).first()
+    official_rate = None
+    if rate_row:
+        official_rate = rate_row.sell_rate if txn.type == "SELL" else rate_row.buy_rate
+
     # Generate ID: OR-XXXXXXXX for counter, RD-XXXXXXXX for rider
     prefix = "RD" if txn.source == "RIDER" else "OR"
     txn_id = f"{prefix}-{uuid.uuid4().hex[:8].upper()}"
@@ -76,6 +82,8 @@ async def create_transaction(
         customer=txn.customer,
         payment_mode=txn.payment_mode or "CASH",
         bank_id=txn.bank_id,
+        official_rate=official_rate,
+        referrer=txn.referrer or None,
     )
     db.add(record)
     db.commit()
@@ -95,6 +103,8 @@ async def create_transaction(
         customer=record.customer,
         payment_mode=record.payment_mode,
         bank_id=record.bank_id,
+        official_rate=record.official_rate,
+        referrer=record.referrer,
     )
 
 
@@ -114,6 +124,7 @@ async def get_today_transactions(
             rate=r.rate, php_amt=r.php_amt, than=r.than,
             cashier=r.cashier, customer=r.customer,
             payment_mode=r.payment_mode, bank_id=r.bank_id,
+            official_rate=r.official_rate, referrer=r.referrer,
         )
         for r in rows
     ]
@@ -135,16 +146,22 @@ async def edit_transaction(
     old_snapshot = {
         "customer":     record.customer,
         "payment_mode": str(record.payment_mode),
+        "bank_id":      record.bank_id,
         "rate":         record.rate,
         "foreign_amt":  record.foreign_amt,
         "php_amt":      record.php_amt,
         "than":         record.than,
+        "referrer":     record.referrer,
     }
 
     if patch.customer is not None:
         record.customer = patch.customer or None
     if patch.payment_mode is not None:
         record.payment_mode = patch.payment_mode
+    if patch.bank_id is not None:
+        record.bank_id = patch.bank_id
+    if patch.referrer is not None:
+        record.referrer = patch.referrer or None
     if patch.rate is not None:
         record.rate = patch.rate
     if patch.foreign_amt is not None:
@@ -159,10 +176,12 @@ async def edit_transaction(
     new_snapshot = {
         "customer":     record.customer,
         "payment_mode": str(record.payment_mode),
+        "bank_id":      record.bank_id,
         "rate":         record.rate,
         "foreign_amt":  record.foreign_amt,
         "php_amt":      record.php_amt,
         "than":         record.than,
+        "referrer":     record.referrer,
     }
 
     db.add(AuditLog(
@@ -183,4 +202,5 @@ async def edit_transaction(
         rate=record.rate, php_amt=record.php_amt, than=record.than,
         cashier=record.cashier, customer=record.customer,
         payment_mode=record.payment_mode, bank_id=record.bank_id,
+        official_rate=record.official_rate, referrer=record.referrer,
     )
