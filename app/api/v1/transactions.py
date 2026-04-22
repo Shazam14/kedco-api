@@ -157,6 +157,8 @@ async def edit_transaction(
         "reference_date": str(record.reference_date) if record.reference_date else None,
     }
 
+    if patch.type is not None:
+        record.type = patch.type
     if patch.customer is not None:
         record.customer = patch.customer or None
     if patch.payment_mode is not None:
@@ -176,11 +178,12 @@ async def edit_transaction(
     if patch.foreign_amt is not None:
         record.foreign_amt = patch.foreign_amt
 
-    # Recompute derived fields whenever rate or foreign_amt changed
-    if patch.rate is not None or patch.foreign_amt is not None:
+    if patch.rate is not None or patch.foreign_amt is not None or patch.type is not None:
         record.php_amt = round(record.foreign_amt * record.rate, 2)
         if str(record.type) == "SELL":
             record.than = round((record.rate - record.daily_avg_cost) * record.foreign_amt, 2)
+        else:
+            record.than = 0.0
 
     new_snapshot = {
         "customer":       record.customer,

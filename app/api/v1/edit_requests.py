@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, Literal
 from datetime import datetime, date
 import uuid
 
@@ -17,6 +17,7 @@ router = APIRouter(tags=["edit-requests"])
 
 
 class EditRequestIn(BaseModel):
+    type:          Optional[Literal["BUY", "SELL"]] = None
     customer:      Optional[str]   = None
     payment_mode:  Optional[str]   = None
     rate:          Optional[float] = None
@@ -85,6 +86,7 @@ async def submit_edit_request(
         raise HTTPException(status_code=409, detail="A pending edit request already exists for this transaction")
 
     proposed = {}
+    if body.type is not None:          proposed["type"]          = body.type
     if body.customer is not None:      proposed["customer"]      = body.customer or None
     if body.payment_mode is not None:  proposed["payment_mode"]  = body.payment_mode
     if body.rate is not None:          proposed["rate"]          = body.rate
@@ -173,6 +175,7 @@ async def approve_edit_request(
     old_snapshot = _txn_snapshot(txn)
 
     p = req.proposed
+    if "type"          in p: txn.type          = p["type"]
     if "customer"      in p: txn.customer      = p["customer"]
     if "payment_mode"  in p: txn.payment_mode  = p["payment_mode"]
     if "rate"          in p: txn.rate          = p["rate"]
@@ -180,10 +183,12 @@ async def approve_edit_request(
     if "official_rate" in p: txn.official_rate = p["official_rate"]
     if "referrer"      in p: txn.referrer      = p["referrer"]
 
-    if "rate" in p or "foreign_amt" in p:
+    if "rate" in p or "foreign_amt" in p or "type" in p:
         txn.php_amt = round(txn.foreign_amt * txn.rate, 2)
         if str(txn.type) == "SELL":
             txn.than = round((txn.rate - txn.daily_avg_cost) * txn.foreign_amt, 2)
+        else:
+            txn.than = 0.0
 
     req.status      = EditRequestStatus.APPROVED
     req.reviewed_by = current_user.username

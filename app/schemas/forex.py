@@ -61,6 +61,7 @@ class CurrencyPositionOut(BaseModel):
 
 
 class TransactionPatch(BaseModel):
+    type:           Optional[Literal["BUY", "SELL"]] = None
     customer:       Optional[str]   = None
     payment_mode:   Optional[str]   = None
     bank_id:        Optional[int]   = None
