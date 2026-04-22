@@ -17,11 +17,13 @@ router = APIRouter(tags=["edit-requests"])
 
 
 class EditRequestIn(BaseModel):
-    customer:     Optional[str]   = None
-    payment_mode: Optional[str]   = None
-    rate:         Optional[float] = None
-    foreign_amt:  Optional[float] = None
-    note:         Optional[str]   = None
+    customer:      Optional[str]   = None
+    payment_mode:  Optional[str]   = None
+    rate:          Optional[float] = None
+    foreign_amt:   Optional[float] = None
+    official_rate: Optional[float] = None
+    referrer:      Optional[str]   = None
+    note:          Optional[str]   = None
 
 
 class RejectIn(BaseModel):
@@ -30,12 +32,14 @@ class RejectIn(BaseModel):
 
 def _txn_snapshot(r: Transaction) -> dict:
     return {
-        "customer":     r.customer,
-        "payment_mode": str(r.payment_mode),
-        "rate":         r.rate,
-        "foreign_amt":  r.foreign_amt,
-        "php_amt":      r.php_amt,
-        "than":         r.than,
+        "customer":      r.customer,
+        "payment_mode":  str(r.payment_mode),
+        "rate":          r.rate,
+        "foreign_amt":   r.foreign_amt,
+        "php_amt":       r.php_amt,
+        "than":          r.than,
+        "official_rate": r.official_rate,
+        "referrer":      r.referrer,
     }
 
 
@@ -81,10 +85,12 @@ async def submit_edit_request(
         raise HTTPException(status_code=409, detail="A pending edit request already exists for this transaction")
 
     proposed = {}
-    if body.customer is not None:     proposed["customer"]     = body.customer or None
-    if body.payment_mode is not None: proposed["payment_mode"] = body.payment_mode
-    if body.rate is not None:         proposed["rate"]         = body.rate
-    if body.foreign_amt is not None:  proposed["foreign_amt"]  = body.foreign_amt
+    if body.customer is not None:      proposed["customer"]      = body.customer or None
+    if body.payment_mode is not None:  proposed["payment_mode"]  = body.payment_mode
+    if body.rate is not None:          proposed["rate"]          = body.rate
+    if body.foreign_amt is not None:   proposed["foreign_amt"]   = body.foreign_amt
+    if body.official_rate is not None: proposed["official_rate"] = body.official_rate or None
+    if body.referrer is not None:      proposed["referrer"]      = body.referrer or None
 
     if not proposed:
         raise HTTPException(status_code=400, detail="No changes submitted")
@@ -167,10 +173,12 @@ async def approve_edit_request(
     old_snapshot = _txn_snapshot(txn)
 
     p = req.proposed
-    if "customer"     in p: txn.customer     = p["customer"]
-    if "payment_mode" in p: txn.payment_mode = p["payment_mode"]
-    if "rate"         in p: txn.rate         = p["rate"]
-    if "foreign_amt"  in p: txn.foreign_amt  = p["foreign_amt"]
+    if "customer"      in p: txn.customer      = p["customer"]
+    if "payment_mode"  in p: txn.payment_mode  = p["payment_mode"]
+    if "rate"          in p: txn.rate          = p["rate"]
+    if "foreign_amt"   in p: txn.foreign_amt   = p["foreign_amt"]
+    if "official_rate" in p: txn.official_rate = p["official_rate"]
+    if "referrer"      in p: txn.referrer      = p["referrer"]
 
     if "rate" in p or "foreign_amt" in p:
         txn.php_amt = round(txn.foreign_amt * txn.rate, 2)
