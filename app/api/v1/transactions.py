@@ -56,11 +56,13 @@ async def create_transaction(
     php_amt = round(txn.foreign_amt * txn.rate, 2)
     than = round((txn.rate - daily_avg) * txn.foreign_amt, 2) if txn.type == "SELL" else 0.0
 
-    # Capture official (admin-set) rate at time of transaction
-    rate_row = db.query(DailyRate).filter_by(date=today, currency_code=txn.currency).first()
-    official_rate = None
-    if rate_row:
-        official_rate = rate_row.sell_rate if txn.type == "SELL" else rate_row.buy_rate
+    # Guide rate comes from the cashier (what their supervisor told them to use).
+    # Fall back to the rate board only if cashier didn't provide one.
+    official_rate = txn.official_rate
+    if official_rate is None:
+        rate_row = db.query(DailyRate).filter_by(date=today, currency_code=txn.currency).first()
+        if rate_row:
+            official_rate = rate_row.sell_rate if txn.type == "SELL" else rate_row.buy_rate
 
     # Generate ID: OR-XXXXXXXX for counter, RD-XXXXXXXX for rider
     prefix = "RD" if txn.source == "RIDER" else "OR"

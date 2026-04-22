@@ -19,6 +19,7 @@ class TransactionIn(BaseModel):
     customer: Optional[str] = None
     payment_mode: Optional[str] = "CASH"
     bank_id: Optional[int] = None
+    official_rate: Optional[float] = None  # guide rate the cashier was given
     referrer: Optional[str] = None
     payment_tag: Optional[str] = None    # ADVANCE | LATE
     reference_date: Optional[date] = None
