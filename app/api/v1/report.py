@@ -70,6 +70,12 @@ async def get_daily_report(
         key=lambda x: (category_order.get(x["category"], 9), -(x["buy_php"] + x["sell_php"]))
     )
 
+    def _comm(t):
+        if not t.official_rate:
+            return 0.0
+        return (t.rate - t.official_rate) * t.foreign_amt if str(t.type) == "SELL" \
+            else (t.official_rate - t.rate) * t.foreign_amt
+
     # ── By cashier ───────────────────────────────────────────────────────
     by_cashier: dict[str, dict] = {}
     for t in txns:
@@ -79,7 +85,7 @@ async def get_daily_report(
                 "cashier":    name,
                 "buy_count":  0, "buy_php":  0.0,
                 "sell_count": 0, "sell_php": 0.0,
-                "than": 0.0,
+                "than": 0.0, "commission": 0.0,
             }
         if t.type == "BUY":
             by_cashier[name]["buy_count"] += 1
@@ -88,11 +94,13 @@ async def get_daily_report(
             by_cashier[name]["sell_count"] += 1
             by_cashier[name]["sell_php"]   += t.php_amt
             by_cashier[name]["than"]       += t.than
+        by_cashier[name]["commission"] += _comm(t)
 
     # ── Totals ───────────────────────────────────────────────────────────
-    total_bought = sum(t.php_amt for t in txns if t.type == "BUY")
-    total_sold   = sum(t.php_amt for t in txns if t.type == "SELL")
-    total_than   = sum(t.than   for t in txns)
+    total_bought     = sum(t.php_amt for t in txns if t.type == "BUY")
+    total_sold       = sum(t.php_amt for t in txns if t.type == "SELL")
+    total_than       = sum(t.than   for t in txns)
+    total_commission = sum(_comm(t) for t in txns)
 
     # ── Special credits ──────────────────────────────────────────────────────
     # Disbursements: credits given out today
@@ -143,10 +151,11 @@ async def get_daily_report(
     return {
         "date":               str(target),
         "generated_at":       datetime.now().strftime("%I:%M %p"),
-        "total_transactions": len(txns),
-        "total_bought_php":   round(total_bought, 2),
-        "total_sold_php":     round(total_sold,   2),
-        "total_than":         round(total_than,   2),
+        "total_transactions":  len(txns),
+        "total_bought_php":    round(total_bought,     2),
+        "total_sold_php":      round(total_sold,       2),
+        "total_than":          round(total_than,       2),
+        "total_commission":    round(total_commission, 2),
         "by_currency":        sorted_currencies,
         "by_cashier":         sorted(by_cashier.values(), key=lambda x: x["cashier"]),
         "special_credits": {

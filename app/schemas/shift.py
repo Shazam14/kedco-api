@@ -31,3 +31,4 @@ class ShiftOut(BaseModel):
     total_sold_php: Optional[float] = None
     total_bought_php: Optional[float] = None
     total_than: Optional[float] = None
+    total_commission: Optional[float] = None

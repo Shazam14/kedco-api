@@ -24,6 +24,14 @@ def _shift_to_out(shift: TellerShift, db: Session) -> ShiftOut:
     total_bought = sum(t.php_amt for t in txns if t.type == "BUY")
     total_than   = sum(t.than for t in txns)
 
+    def _comm(t):
+        if not t.official_rate:
+            return 0.0
+        return (t.rate - t.official_rate) * t.foreign_amt if str(t.type) == "SELL" \
+            else (t.official_rate - t.rate) * t.foreign_amt
+
+    total_commission = sum(_comm(t) for t in txns)
+
     return ShiftOut(
         id=str(shift.id),
         date=shift.date,
@@ -41,6 +49,7 @@ def _shift_to_out(shift: TellerShift, db: Session) -> ShiftOut:
         total_sold_php=round(total_sold, 2),
         total_bought_php=round(total_bought, 2),
         total_than=round(total_than, 2),
+        total_commission=round(total_commission, 2),
     )
 
 
