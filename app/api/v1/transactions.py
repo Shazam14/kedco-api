@@ -116,6 +116,15 @@ async def get_today_transactions(
     q = db.query(Transaction).filter(Transaction.date == get_today())
     if current_user.role == 'cashier':
         q = q.filter(Transaction.cashier == current_user.username)
+        # Only show transactions from the current open shift
+        from app.models.shift import TellerShift, ShiftStatus
+        shift = db.query(TellerShift).filter_by(
+            cashier=current_user.username,
+            date=get_today(),
+            status=ShiftStatus.OPEN,
+        ).first()
+        if shift:
+            q = q.filter(Transaction.created_at >= shift.opened_at)
     rows = q.order_by(Transaction.created_at.desc()).all()
     return [
         TransactionOut(
