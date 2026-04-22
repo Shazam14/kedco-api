@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional
-from datetime import date, datetime
+from datetime import datetime
 import uuid
 
 from app.core.database import get_db
@@ -10,6 +10,7 @@ from app.models.transaction import Transaction
 from app.models.audit import AuditLog
 from app.models.edit_request import TransactionEditRequest, EditRequestStatus
 from app.api.v1.auth import require_role, TokenData
+from app.core.today import get_today
 from app.services.email import notify_edit_request
 
 router = APIRouter(tags=["edit-requests"])
@@ -68,7 +69,7 @@ async def submit_edit_request(
     txn = db.query(Transaction).filter_by(id=txn_id).first()
     if not txn:
         raise HTTPException(status_code=404, detail="Transaction not found")
-    if txn.date != date.today():
+    if txn.date != get_today():
         raise HTTPException(status_code=403, detail="Only same-day transactions can be edited")
     if txn.cashier != current_user.username:
         raise HTTPException(status_code=403, detail="You can only request edits on your own transactions")
@@ -116,7 +117,7 @@ async def my_pending_edits(
     rows = db.query(TransactionEditRequest).filter_by(
         requested_by=current_user.username,
         status=EditRequestStatus.PENDING,
-    ).filter(TransactionEditRequest.txn_date == date.today()).all()
+    ).filter(TransactionEditRequest.txn_date == get_today()).all()
     return [str(r.txn_id) for r in rows]
 
 

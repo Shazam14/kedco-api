@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from datetime import date, datetime
+from datetime import datetime
 
 from app.core.database import get_db
 from app.models.shift import TellerShift, ShiftStatus
@@ -8,6 +8,7 @@ from app.models.transaction import Transaction
 from app.models.user import User
 from app.schemas.shift import ShiftOpenIn, ShiftCloseIn, ShiftOut
 from app.api.v1.auth import require_role, TokenData
+from app.core.today import get_today
 
 router = APIRouter(prefix="/shifts", tags=["shifts"])
 
@@ -49,7 +50,7 @@ async def open_shift(
     current_user: TokenData = Depends(require_role("admin", "cashier", "supervisor")),
     db: Session = Depends(get_db),
 ):
-    today = date.today()
+    today = get_today()
 
     # Block if cashier already has an open shift today
     existing = db.query(TellerShift).filter_by(
@@ -87,7 +88,7 @@ async def close_shift(
     current_user: TokenData = Depends(require_role("admin", "cashier", "supervisor")),
     db: Session = Depends(get_db),
 ):
-    today = date.today()
+    today = get_today()
 
     shift = db.query(TellerShift).filter_by(
         cashier=current_user.username,
@@ -130,7 +131,7 @@ async def get_active_shift(
     current_user: TokenData = Depends(require_role("admin", "cashier", "supervisor")),
     db: Session = Depends(get_db),
 ):
-    today = date.today()
+    today = get_today()
     shift = db.query(TellerShift).filter_by(
         cashier=current_user.username,
         date=today,
@@ -149,7 +150,7 @@ async def get_today_shifts(
     demo_users = db.query(User.username).filter(User.is_demo == True).scalar_subquery()
     shifts = (
         db.query(TellerShift)
-        .filter(TellerShift.date == date.today())
+        .filter(TellerShift.date == get_today())
         .filter(~TellerShift.cashier.in_(demo_users))
         .order_by(TellerShift.opened_at)
         .all()

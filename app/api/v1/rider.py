@@ -1,25 +1,39 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from sqlalchemy import dialects
 from pydantic import BaseModel
 from typing import Optional
-from datetime import date, datetime
+from datetime import datetime
 import uuid
 
 from app.core.database import get_db
 from app.api.v1.auth import require_role, TokenData
-from app.models.transaction import RiderDispatch, RiderBorrow, Transaction, DispatchStatus, PaymentStatus
+from app.models.transaction import (
+    RiderDispatch, RiderDispatchItem, RiderRemitItem,
+    RiderBorrow, Transaction, DispatchStatus, PaymentStatus,
+)
 from app.models.user import User
+from app.core.today import get_today
 
 router = APIRouter(prefix="/rider", tags=["rider"])
 
 
 # ── Schemas ────────────────────────────────────────────────────────────────────
 
+class CurrencyItem(BaseModel):
+    currency: str
+    amount: float
+
 class DispatchIn(BaseModel):
     rider_username: str
-    cash_php: float
+    items: list[CurrencyItem]
     notes: Optional[str] = None
+
+class RemitIn(BaseModel):
+    items: list[CurrencyItem]
+
+class ItemOut(BaseModel):
+    currency: str
+    amount: float
 
 class DispatchOut(BaseModel):
     id: str
@@ -29,7 +43,8 @@ class DispatchOut(BaseModel):
     status: str
     dispatch_time: Optional[str]
     return_time: Optional[str]
-    cash_php: float
+    items: list[ItemOut]
+    remit_items: list[ItemOut]
     notes: Optional[str]
     dispatched_by: Optional[str]
 
@@ -63,8 +78,8 @@ def list_today_dispatches(
     db: Session = Depends(get_db),
     _: TokenData = Depends(require_role("admin", "supervisor")),
 ):
-    rows = db.query(RiderDispatch).filter_by(date=date.today()).order_by(RiderDispatch.created_at).all()
-    return [_dispatch_out(r) for r in rows]
+    rows = db.query(RiderDispatch).filter_by(date=get_today()).order_by(RiderDispatch.created_at).all()
+    return [_dispatch_out(r, db) for r in rows]
 
 
 @router.post("/dispatches", response_model=DispatchOut, status_code=201)
@@ -73,48 +88,69 @@ def dispatch_rider(
     db: Session = Depends(get_db),
     current_user: TokenData = Depends(require_role("admin", "supervisor")),
 ):
-    # Verify the rider exists
+    if not data.items:
+        raise HTTPException(400, "At least one currency item is required")
+
     rider = db.query(User).filter_by(username=data.rider_username, role="rider").first()
     if not rider:
         raise HTTPException(400, f"Rider '{data.rider_username}' not found")
 
-    # Check not already IN_FIELD today
     existing = db.query(RiderDispatch).filter_by(
-        date=date.today(), rider_username=data.rider_username, status=DispatchStatus.IN_FIELD
+        date=get_today(), rider_username=data.rider_username, status=DispatchStatus.IN_FIELD
     ).first()
     if existing:
         raise HTTPException(400, f"{data.rider_username} is already dispatched today")
 
     dispatch = RiderDispatch(
         id=uuid.uuid4(),
-        date=date.today(),
+        date=get_today(),
         rider_username=data.rider_username,
         rider_name=rider.full_name or rider.username,
         status=DispatchStatus.IN_FIELD,
         dispatch_time=datetime.now().strftime("%I:%M %p"),
-        cash_php=data.cash_php,
         notes=data.notes,
         dispatched_by=current_user.username,
     )
     db.add(dispatch)
+    db.flush()
+
+    for item in data.items:
+        db.add(RiderDispatchItem(
+            id=uuid.uuid4(),
+            dispatch_id=dispatch.id,
+            currency=item.currency.upper(),
+            amount=item.amount,
+        ))
+
     db.commit()
     db.refresh(dispatch)
-    return _dispatch_out(dispatch)
+    return _dispatch_out(dispatch, db)
 
 
 @router.patch("/dispatches/{dispatch_id}/return")
 def mark_returned(
     dispatch_id: str,
+    data: RemitIn,
     db: Session = Depends(get_db),
     _: TokenData = Depends(require_role("admin", "supervisor")),
 ):
     dispatch = db.query(RiderDispatch).filter_by(id=dispatch_id).first()
     if not dispatch:
         raise HTTPException(404, "Dispatch not found")
+
     dispatch.status = DispatchStatus.RETURNED
     dispatch.return_time = datetime.now().strftime("%I:%M %p")
+
+    for item in data.items:
+        db.add(RiderRemitItem(
+            id=uuid.uuid4(),
+            dispatch_id=dispatch.id,
+            currency=item.currency.upper(),
+            amount=item.amount,
+        ))
+
     db.commit()
-    return {"message": "Marked as returned"}
+    return _dispatch_out(dispatch, db)
 
 
 # ── Borrow endpoints ───────────────────────────────────────────────────────────
@@ -178,9 +214,9 @@ def confirm_payment(
         raise HTTPException(404, "Transaction not found")
     if txn.payment_status == PaymentStatus.RECEIVED:
         raise HTTPException(400, "Payment already confirmed")
-    txn.payment_status  = PaymentStatus.RECEIVED
-    txn.confirmed_by    = current_user.username
-    txn.confirmed_at    = datetime.now()
+    txn.payment_status = PaymentStatus.RECEIVED
+    txn.confirmed_by   = current_user.username
+    txn.confirmed_at   = datetime.now()
     db.commit()
     return {"message": "Payment confirmed", "confirmed_by": current_user.username}
 
@@ -192,20 +228,21 @@ def my_dispatch(
     db: Session = Depends(get_db),
     current_user: TokenData = Depends(require_role("rider")),
 ):
-    """Rider fetches their own active dispatch for today (to get dispatch_id for borrows)."""
     dispatch = db.query(RiderDispatch).filter_by(
-        date=date.today(),
+        date=get_today(),
         rider_username=current_user.username,
         status=DispatchStatus.IN_FIELD,
     ).first()
     if not dispatch:
         return {"dispatch": None}
-    return {"dispatch": _dispatch_out(dispatch)}
+    return {"dispatch": _dispatch_out(dispatch, db)}
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
-def _dispatch_out(d: RiderDispatch) -> DispatchOut:
+def _dispatch_out(d: RiderDispatch, db: Session) -> DispatchOut:
+    dispatch_items = db.query(RiderDispatchItem).filter_by(dispatch_id=d.id).order_by(RiderDispatchItem.created_at).all()
+    remit_items    = db.query(RiderRemitItem).filter_by(dispatch_id=d.id).order_by(RiderRemitItem.created_at).all()
     return DispatchOut(
         id=str(d.id),
         date=d.date,
@@ -214,7 +251,8 @@ def _dispatch_out(d: RiderDispatch) -> DispatchOut:
         status=d.status.value if hasattr(d.status, 'value') else d.status,
         dispatch_time=d.dispatch_time,
         return_time=d.return_time,
-        cash_php=d.cash_php,
+        items=[ItemOut(currency=i.currency, amount=i.amount) for i in dispatch_items],
+        remit_items=[ItemOut(currency=i.currency, amount=i.amount) for i in remit_items],
         notes=d.notes,
         dispatched_by=d.dispatched_by,
     )

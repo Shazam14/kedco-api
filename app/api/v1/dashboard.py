@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy import func
 from sqlalchemy.orm import Session
-from datetime import date, datetime
+from datetime import datetime
 
 from app.core.database import get_db
 from app.models.currency import Currency, DailyRate, DailyPosition
@@ -10,6 +10,7 @@ from app.models.user import User
 from app.schemas.forex import DashboardSummaryOut, CurrencyPositionOut, TransactionOut
 from app.services.forex import compute_position, CarryIn, TodayBuy
 from app.api.v1.auth import get_current_user, TokenData
+from app.core.today import get_today
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
@@ -42,7 +43,7 @@ async def get_dashboard_summary(
     current_user: TokenData = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    today = date.today()
+    today = get_today()
     cache_key = _cache_key(today)
 
     cached = _get_cached(cache_key)

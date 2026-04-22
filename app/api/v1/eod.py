@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy import func
-from datetime import date, timedelta
+from datetime import timedelta
 
 from app.core.database import get_db
 from app.models.currency import DailyRate, DailyPosition
@@ -9,6 +9,7 @@ from app.models.transaction import Transaction, DailySummary
 from app.models.user import User
 from app.services.forex import compute_position, CarryIn, TodayBuy
 from app.api.v1.auth import require_role, TokenData
+from app.core.today import get_today
 
 router = APIRouter(prefix="/eod", tags=["end-of-day"])
 
@@ -28,7 +29,7 @@ async def close_day(
 
     Idempotent — safe to run again if interrupted.
     """
-    today    = date.today()
+    today    = get_today()
     tomorrow = today + timedelta(days=1)
 
     # ── 1. Get today's rates ──────────────────────────────────────────

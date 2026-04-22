@@ -1,10 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from datetime import date
 from typing import List
 from pydantic import BaseModel
 
 from app.core.database import get_db
+from app.core.today import get_today
 from app.models.currency import Currency, DailyPosition, DailyRate
 from app.api.v1.auth import require_role, TokenData
 
@@ -23,7 +23,7 @@ async def get_today_positions(
     db: Session = Depends(get_db),
 ):
     """Return today's opening positions for all active currencies."""
-    today = date.today()
+    today = get_today()
 
     currencies = db.query(Currency).filter_by(is_active="Y").order_by(Currency.sort_order).all()
     positions  = {
@@ -64,7 +64,7 @@ async def set_today_positions(
             detail="No positions provided.",
         )
 
-    today = date.today()
+    today = get_today()
     saved = 0
 
     for item in payload:

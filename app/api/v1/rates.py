@@ -1,9 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List
-from datetime import date
-
 from app.core.database import get_db
+from app.core.today import get_today
 from app.models.currency import DailyRate, Currency
 from app.schemas.forex import CurrencyRateIn
 from app.api.v1.auth import require_role, TokenData
@@ -14,7 +13,7 @@ router = APIRouter(prefix="/rates", tags=["rates"])
 @router.get("/public")
 async def get_public_rates(db: Session = Depends(get_db)):
     """Public endpoint — no auth required. Returns today's rates for display."""
-    today = date.today()
+    today = get_today()
     currencies = {c.code: c for c in db.query(Currency).filter_by(is_active="Y").order_by(Currency.sort_order).all()}
     rates = db.query(DailyRate).filter_by(date=today).all()
     return [
@@ -36,7 +35,7 @@ async def get_today_rates(
     current_user: TokenData = Depends(require_role("admin", "cashier")),
     db: Session = Depends(get_db),
 ):
-    today = date.today()
+    today = get_today()
     rates = db.query(DailyRate).filter_by(date=today).all()
     return [
         {
@@ -59,7 +58,7 @@ async def set_today_rates(
     Set or update today's exchange rates. Admin only.
     If a rate already exists for today it is updated, otherwise inserted.
     """
-    today = date.today()
+    today = get_today()
 
     # Validate all currency codes exist
     valid_codes = {c.code for c in db.query(Currency).all()}

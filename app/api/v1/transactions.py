@@ -1,9 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from datetime import date, datetime
+from datetime import datetime
 import uuid
 
 from app.core.database import get_db
+from app.core.today import get_today
 from app.models.transaction import Transaction
 from app.models.audit import AuditLog
 from app.models.currency import DailyRate, DailyPosition
@@ -14,7 +15,7 @@ from app.api.v1.auth import require_role, TokenData
 router = APIRouter(prefix="/transactions", tags=["transactions"])
 
 
-def _get_daily_avg(currency_code: str, today: date, db: Session) -> float:
+def _get_daily_avg(currency_code: str, today, db: Session) -> float:
     """
     Compute today's daily avg cost for a currency using DB data.
     Needed to calculate THAN on sell transactions.
@@ -48,7 +49,7 @@ async def create_transaction(
     current_user: TokenData = Depends(require_role("admin", "cashier", "rider")),
     db: Session = Depends(get_db),
 ):
-    today = date.today()
+    today = get_today()
     now = datetime.now().strftime("%I:%M %p")
 
     daily_avg = _get_daily_avg(txn.currency, today, db)
@@ -102,7 +103,7 @@ async def get_today_transactions(
     current_user: TokenData = Depends(require_role("admin", "cashier", "rider")),
     db: Session = Depends(get_db),
 ):
-    rows = db.query(Transaction).filter_by(date=date.today()).order_by(
+    rows = db.query(Transaction).filter_by(date=get_today()).order_by(
         Transaction.created_at.desc()
     ).all()
     return [
@@ -127,7 +128,7 @@ async def edit_transaction(
     record = db.query(Transaction).filter_by(id=txn_id).first()
     if not record:
         raise HTTPException(status_code=404, detail="Transaction not found")
-    if record.date != date.today():
+    if record.date != get_today():
         raise HTTPException(status_code=403, detail="Only same-day transactions can be edited")
 
     old_snapshot = {

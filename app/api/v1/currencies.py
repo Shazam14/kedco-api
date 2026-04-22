@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
-from datetime import date
 
 from app.core.database import get_db
+from app.core.today import get_today
 from app.models.currency import Currency, DailyRate
 from app.api.v1.auth import require_role, TokenData
 
@@ -15,7 +15,7 @@ async def list_currencies(
     db: Session = Depends(get_db),
 ):
     """All active currencies with today's rates if already set."""
-    today = date.today()
+    today = get_today()
     currencies = db.query(Currency).filter_by(is_active="Y").order_by(Currency.sort_order).all()
     rates_today = {
         r.currency_code: r
