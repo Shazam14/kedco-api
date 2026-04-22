@@ -20,6 +20,8 @@ class TransactionIn(BaseModel):
     payment_mode: Optional[str] = "CASH"
     bank_id: Optional[int] = None
     referrer: Optional[str] = None
+    payment_tag: Optional[str] = None    # ADVANCE | LATE
+    reference_date: Optional[date] = None
 
 
 class TransactionOut(BaseModel):
@@ -38,6 +40,8 @@ class TransactionOut(BaseModel):
     bank_id: Optional[int] = None
     official_rate: Optional[float] = None
     referrer: Optional[str] = None
+    payment_tag: Optional[str] = None
+    reference_date: Optional[date] = None
 
 
 class CurrencyPositionOut(BaseModel):
@@ -56,12 +60,14 @@ class CurrencyPositionOut(BaseModel):
 
 
 class TransactionPatch(BaseModel):
-    customer:     Optional[str]   = None
-    payment_mode: Optional[str]   = None
-    bank_id:      Optional[int]   = None
-    rate:         Optional[float] = None
-    foreign_amt:  Optional[float] = None
-    referrer:     Optional[str]   = None
+    customer:       Optional[str]   = None
+    payment_mode:   Optional[str]   = None
+    bank_id:        Optional[int]   = None
+    rate:           Optional[float] = None
+    foreign_amt:    Optional[float] = None
+    referrer:       Optional[str]   = None
+    payment_tag:    Optional[str]   = None
+    reference_date: Optional[date]  = None
 
 
 class DashboardSummaryOut(BaseModel):

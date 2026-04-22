@@ -84,6 +84,8 @@ async def create_transaction(
         bank_id=txn.bank_id,
         official_rate=official_rate,
         referrer=txn.referrer or None,
+        payment_tag=txn.payment_tag or None,
+        reference_date=txn.reference_date,
     )
     db.add(record)
     db.commit()
@@ -105,12 +107,14 @@ async def create_transaction(
         bank_id=record.bank_id,
         official_rate=record.official_rate,
         referrer=record.referrer,
+        payment_tag=record.payment_tag,
+        reference_date=record.reference_date,
     )
 
 
 @router.get("/today", response_model=list[TransactionOut])
 async def get_today_transactions(
-    current_user: TokenData = Depends(require_role("admin", "cashier", "rider")),
+    current_user: TokenData = Depends(require_role("admin", "cashier", "supervisor", "rider")),
     db: Session = Depends(get_db),
 ):
     q = db.query(Transaction).filter(Transaction.date == get_today())
@@ -125,6 +129,7 @@ async def get_today_transactions(
             cashier=r.cashier, customer=r.customer,
             payment_mode=r.payment_mode, bank_id=r.bank_id,
             official_rate=r.official_rate, referrer=r.referrer,
+            payment_tag=r.payment_tag, reference_date=r.reference_date,
         )
         for r in rows
     ]
@@ -144,14 +149,16 @@ async def edit_transaction(
         raise HTTPException(status_code=403, detail="Only same-day transactions can be edited")
 
     old_snapshot = {
-        "customer":     record.customer,
-        "payment_mode": str(record.payment_mode),
-        "bank_id":      record.bank_id,
-        "rate":         record.rate,
-        "foreign_amt":  record.foreign_amt,
-        "php_amt":      record.php_amt,
-        "than":         record.than,
-        "referrer":     record.referrer,
+        "customer":       record.customer,
+        "payment_mode":   str(record.payment_mode),
+        "bank_id":        record.bank_id,
+        "rate":           record.rate,
+        "foreign_amt":    record.foreign_amt,
+        "php_amt":        record.php_amt,
+        "than":           record.than,
+        "referrer":       record.referrer,
+        "payment_tag":    record.payment_tag,
+        "reference_date": str(record.reference_date) if record.reference_date else None,
     }
 
     if patch.customer is not None:
@@ -162,6 +169,10 @@ async def edit_transaction(
         record.bank_id = patch.bank_id
     if patch.referrer is not None:
         record.referrer = patch.referrer or None
+    if patch.payment_tag is not None:
+        record.payment_tag = patch.payment_tag or None
+    if patch.reference_date is not None:
+        record.reference_date = patch.reference_date
     if patch.rate is not None:
         record.rate = patch.rate
     if patch.foreign_amt is not None:
@@ -174,14 +185,16 @@ async def edit_transaction(
             record.than = round((record.rate - record.daily_avg_cost) * record.foreign_amt, 2)
 
     new_snapshot = {
-        "customer":     record.customer,
-        "payment_mode": str(record.payment_mode),
-        "bank_id":      record.bank_id,
-        "rate":         record.rate,
-        "foreign_amt":  record.foreign_amt,
-        "php_amt":      record.php_amt,
-        "than":         record.than,
-        "referrer":     record.referrer,
+        "customer":       record.customer,
+        "payment_mode":   str(record.payment_mode),
+        "bank_id":        record.bank_id,
+        "rate":           record.rate,
+        "foreign_amt":    record.foreign_amt,
+        "php_amt":        record.php_amt,
+        "than":           record.than,
+        "referrer":       record.referrer,
+        "payment_tag":    record.payment_tag,
+        "reference_date": str(record.reference_date) if record.reference_date else None,
     }
 
     db.add(AuditLog(
@@ -203,4 +216,5 @@ async def edit_transaction(
         cashier=record.cashier, customer=record.customer,
         payment_mode=record.payment_mode, bank_id=record.bank_id,
         official_rate=record.official_rate, referrer=record.referrer,
+        payment_tag=record.payment_tag, reference_date=record.reference_date,
     )

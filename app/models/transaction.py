@@ -56,6 +56,8 @@ class Transaction(Base):
     bank_id        = Column(Integer, ForeignKey("banks.id"), nullable=True)
     official_rate  = Column(Float, nullable=True)         # admin-set rate at time of txn
     referrer       = Column(String(100), nullable=True)   # tour guide / referral source
+    payment_tag    = Column(String(10), nullable=True)    # ADVANCE | LATE | null
+    reference_date = Column(Date, nullable=True)          # date the payment relates to
     payment_status = Column(Enum(PaymentStatus), default=PaymentStatus.RECEIVED, nullable=False)
     confirmed_by   = Column(String(50), nullable=True)   # admin who confirmed pending payment
     confirmed_at   = Column(DateTime(timezone=True), nullable=True)
