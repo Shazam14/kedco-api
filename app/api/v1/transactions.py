@@ -103,9 +103,10 @@ async def get_today_transactions(
     current_user: TokenData = Depends(require_role("admin", "cashier", "rider")),
     db: Session = Depends(get_db),
 ):
-    rows = db.query(Transaction).filter_by(date=get_today()).order_by(
-        Transaction.created_at.desc()
-    ).all()
+    q = db.query(Transaction).filter(Transaction.date == get_today())
+    if current_user.role == 'cashier':
+        q = q.filter(Transaction.cashier == current_user.username)
+    rows = q.order_by(Transaction.created_at.desc()).all()
     return [
         TransactionOut(
             id=r.id, time=r.time, type=r.type, source=r.source,
