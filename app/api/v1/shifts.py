@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from datetime import datetime
+from datetime import datetime, date
 
 from app.core.database import get_db
 from app.models.shift import TellerShift, ShiftStatus

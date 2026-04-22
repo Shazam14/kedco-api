@@ -6,6 +6,7 @@ from app.core.today import get_today
 from app.models.currency import DailyRate, Currency
 from app.schemas.forex import CurrencyRateIn
 from app.api.v1.auth import require_role, TokenData
+from datetime import date
 
 router = APIRouter(prefix="/rates", tags=["rates"])
 

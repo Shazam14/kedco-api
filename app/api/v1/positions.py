@@ -7,6 +7,7 @@ from app.core.database import get_db
 from app.core.today import get_today
 from app.models.currency import Currency, DailyPosition, DailyRate
 from app.api.v1.auth import require_role, TokenData
+from datetime import date
 
 router = APIRouter(prefix="/positions", tags=["positions"])
 

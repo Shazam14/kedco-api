@@ -81,10 +81,33 @@ class RiderDispatch(Base):
     dispatch_time = Column(String(10), nullable=True)
     return_time   = Column(String(10), nullable=True)
     cash_php      = Column(Float, default=0)
+    remit_php     = Column(Float, nullable=True)
     notes         = Column(String(200), nullable=True)
     dispatched_by = Column(String(50), nullable=True)
     created_at    = Column(DateTime(timezone=True), server_default=func.now())
     updated_at    = Column(DateTime(timezone=True), onupdate=func.now())
+
+
+class RiderDispatchItem(Base):
+    """Currency items given to a rider on dispatch."""
+    __tablename__ = "rider_dispatch_items"
+
+    id          = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    dispatch_id = Column(UUID(as_uuid=True), ForeignKey("rider_dispatches.id", ondelete="CASCADE"), nullable=False)
+    currency    = Column(String(10), nullable=False)
+    amount      = Column(Float, nullable=False)
+    created_at  = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class RiderRemitItem(Base):
+    """Currency items returned by a rider on remit."""
+    __tablename__ = "rider_remit_items"
+
+    id          = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    dispatch_id = Column(UUID(as_uuid=True), ForeignKey("rider_dispatches.id", ondelete="CASCADE"), nullable=False)
+    currency    = Column(String(10), nullable=False)
+    amount      = Column(Float, nullable=False)
+    created_at  = Column(DateTime(timezone=True), server_default=func.now())
 
 
 class RiderBorrow(Base):

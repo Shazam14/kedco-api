@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy import func
-from datetime import timedelta
+from datetime import timedelta, date
 
 from app.core.database import get_db
 from app.models.currency import DailyRate, DailyPosition
