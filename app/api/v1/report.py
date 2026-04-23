@@ -104,7 +104,10 @@ async def get_daily_report(
     total_commission = sum(_comm(t) for t in txns)
 
     # ── Opening positions ────────────────────────────────────────────────────
-    raw_positions = db.query(DailyPosition).filter(DailyPosition.date == target).all()
+    raw_positions = db.query(DailyPosition).filter(
+        DailyPosition.date == target,
+        DailyPosition.carry_in_qty > 0,
+    ).all()
     opening_positions = []
     total_opening_stock_php = 0.0
     for p in raw_positions:
