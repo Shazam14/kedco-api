@@ -1,6 +1,7 @@
 from pydantic import BaseModel
 from typing import List, Optional, Literal
 from datetime import date, datetime
+from uuid import UUID
 
 
 class CurrencyRateIn(BaseModel):
@@ -43,6 +44,24 @@ class TransactionOut(BaseModel):
     referrer: Optional[str] = None
     payment_tag: Optional[str] = None
     reference_date: Optional[date] = None
+    batch_id: Optional[UUID] = None
+
+
+class BatchItemIn(BaseModel):
+    currency: str
+    foreign_amt: float
+    rate: float
+    official_rate: Optional[float] = None
+
+
+class TransactionBatchIn(BaseModel):
+    type: Literal["BUY", "SELL"]
+    source: Literal["COUNTER", "RIDER"] = "COUNTER"
+    customer: Optional[str] = None
+    payment_mode: Optional[str] = "CASH"
+    bank_id: Optional[int] = None
+    referrer: Optional[str] = None
+    items: List[BatchItemIn]
 
 
 class CurrencyPositionOut(BaseModel):

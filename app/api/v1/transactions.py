@@ -8,7 +8,7 @@ from app.core.today import get_today
 from app.models.transaction import Transaction
 from app.models.audit import AuditLog
 from app.models.currency import DailyRate, DailyPosition
-from app.schemas.forex import TransactionIn, TransactionOut, TransactionPatch
+from app.schemas.forex import TransactionIn, TransactionOut, TransactionPatch, TransactionBatchIn
 from app.services.forex import compute_position, CarryIn, TodayBuy
 from app.api.v1.auth import require_role, TokenData
 
@@ -106,6 +106,53 @@ async def create_transaction(
         payment_tag=record.payment_tag,
         reference_date=record.reference_date,
     )
+
+
+@router.post("/batch", response_model=list[TransactionOut], status_code=status.HTTP_201_CREATED)
+async def create_batch_transaction(
+    batch: TransactionBatchIn,
+    current_user: TokenData = Depends(require_role("admin", "cashier", "supervisor")),
+    db: Session = Depends(get_db),
+):
+    today = get_today()
+    now = datetime.now().strftime("%I:%M %p")
+    batch_uuid = uuid.uuid4()
+
+    records = []
+    for item in batch.items:
+        daily_avg = _get_daily_avg(item.currency, today, db)
+        php_amt = round(item.foreign_amt * item.rate, 2)
+        than = round((item.rate - daily_avg) * item.foreign_amt, 2) if batch.type == "SELL" else 0.0
+        txn_id = f"OR-{uuid.uuid4().hex[:8].upper()}"
+        record = Transaction(
+            id=txn_id, date=today, time=now,
+            type=batch.type, source=batch.source or "COUNTER",
+            currency_code=item.currency, foreign_amt=item.foreign_amt,
+            rate=item.rate, php_amt=php_amt,
+            daily_avg_cost=daily_avg, than=than,
+            cashier=current_user.username, customer=batch.customer,
+            payment_mode=batch.payment_mode or "CASH",
+            bank_id=batch.bank_id,
+            official_rate=item.official_rate,
+            referrer=batch.referrer or None,
+            batch_id=batch_uuid,
+        )
+        db.add(record)
+        records.append(record)
+
+    db.commit()
+    for r in records:
+        db.refresh(r)
+
+    return [TransactionOut(
+        id=r.id, time=r.time, type=r.type, source=r.source,
+        currency=r.currency_code, foreign_amt=r.foreign_amt,
+        rate=r.rate, php_amt=r.php_amt, than=r.than,
+        cashier=r.cashier, customer=r.customer,
+        payment_mode=r.payment_mode, bank_id=r.bank_id,
+        official_rate=r.official_rate, referrer=r.referrer,
+        batch_id=r.batch_id,
+    ) for r in records]
 
 
 @router.get("/today", response_model=list[TransactionOut])

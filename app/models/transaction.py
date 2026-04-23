@@ -61,6 +61,7 @@ class Transaction(Base):
     payment_status = Column(Enum(PaymentStatus), default=PaymentStatus.RECEIVED, nullable=False)
     confirmed_by   = Column(String(50), nullable=True)   # admin who confirmed pending payment
     confirmed_at   = Column(DateTime(timezone=True), nullable=True)
+    batch_id       = Column(UUID(as_uuid=True), nullable=True, index=True)
     created_at     = Column(DateTime(timezone=True), server_default=func.now())
 
 
