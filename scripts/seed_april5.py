@@ -23,7 +23,7 @@ DATE_SUFFIX = "0405"
 XLSX        = "/root/projects/4.5.26.xlsx"
 
 CODE_MAP   = {'NTD': 'TWD', 'QR': 'QAR', 'KD': 'KWD'}
-SKIP_CODES = {'TYR', 'MOP', 'BHD', 'BND', 'OMR'}   # not in DB or zero-stock both days
+SKIP_CODES = {'MOP', 'BHD', 'BND', 'OMR'}   # not in DB or zero-stock both days
 
 AM_CASHIER = "jas"
 PM_CASHIER = "ana"
