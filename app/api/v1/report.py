@@ -5,7 +5,7 @@ from typing import Optional
 
 from app.core.database import get_db
 from app.models.transaction import Transaction
-from app.models.currency import Currency
+from app.models.currency import Currency, DailyPosition
 from app.models.user import User
 from app.models.credit import SpecialCredit, CreditInstallment, CreditStatus
 from app.api.v1.auth import require_role, TokenData
@@ -103,6 +103,28 @@ async def get_daily_report(
     total_than       = sum(t.than   for t in txns)
     total_commission = sum(_comm(t) for t in txns)
 
+    # ── Opening positions ────────────────────────────────────────────────────
+    raw_positions = db.query(DailyPosition).filter(DailyPosition.date == target).all()
+    opening_positions = []
+    total_opening_stock_php = 0.0
+    for p in raw_positions:
+        ccy = currencies.get(p.currency_code)
+        carry_php = round(p.carry_in_qty * p.carry_in_rate, 2)
+        total_opening_stock_php += carry_php
+        opening_positions.append({
+            "code":           p.currency_code,
+            "name":           ccy.name            if ccy else p.currency_code,
+            "flag":           ccy.flag            if ccy else "",
+            "category":       ccy.category.value  if ccy else "OTHERS",
+            "sort_order":     ccy.sort_order       if ccy else 99,
+            "decimal_places": ccy.decimal_places   if ccy else 4,
+            "carry_in_qty":   p.carry_in_qty,
+            "carry_in_rate":  p.carry_in_rate,
+            "carry_in_php":   carry_php,
+        })
+    opening_positions.sort(key=lambda x: (category_order.get(x["category"], 9), x["sort_order"]))
+    total_opening_stock_php = round(total_opening_stock_php, 2)
+
     # ── Special credits ──────────────────────────────────────────────────────
     # Disbursements: credits given out today
     credits_today = (
@@ -157,6 +179,8 @@ async def get_daily_report(
         "total_sold_php":      round(total_sold,       2),
         "total_than":          round(total_than,       2),
         "total_commission":    round(total_commission, 2),
+        "opening_positions":       opening_positions,
+        "total_opening_stock_php": total_opening_stock_php,
         "by_currency":        sorted_currencies,
         "by_cashier":         sorted(by_cashier.values(), key=lambda x: x["cashier"]),
         "special_credits": {
