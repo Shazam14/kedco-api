@@ -48,6 +48,7 @@ async def get_daily_report(
                 "name":          ccy.name         if ccy else code,
                 "flag":          ccy.flag         if ccy else "",
                 "category":      ccy.category.value if ccy else "OTHERS",
+                "sort_order":    ccy.sort_order    if ccy else 99,
                 "decimal_places": ccy.decimal_places if ccy else 4,
                 "buy_count":  0, "buy_qty":  0.0, "buy_php":  0.0,
                 "sell_count": 0, "sell_qty": 0.0, "sell_php": 0.0,
@@ -63,11 +64,11 @@ async def get_daily_report(
             by_currency[code]["sell_php"]   += t.php_amt
             by_currency[code]["than"]       += t.than
 
-    # Sort: MAIN first, then 2ND, then OTHERS; within each, by most activity
+    # Sort: MAIN → 2ND → OTHERS, within each by Ken's Excel column order
     category_order = {"MAIN": 0, "2ND": 1, "OTHERS": 2}
     sorted_currencies = sorted(
         by_currency.values(),
-        key=lambda x: (category_order.get(x["category"], 9), -(x["buy_php"] + x["sell_php"]))
+        key=lambda x: (category_order.get(x["category"], 9), x["sort_order"])
     )
 
     def _comm(t):
