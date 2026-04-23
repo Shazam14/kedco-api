@@ -10,7 +10,7 @@ Cashier: jas (AM 08:00–13:00), ana (PM 13:00–17:30)
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
-from datetime import date
+from datetime import date, timedelta
 from collections import Counter
 import openpyxl
 
@@ -113,6 +113,21 @@ def parse_pairs(ws, pairs, data_start):
     return txns
 
 
+def read_stocksleft(wb):
+    """Read STOCKSLEFT sheet → {db_code: (qty, rate)} skipping zero-qty and non-DB currencies."""
+    stocks = {}
+    for row in wb["STOCKSLEFT"].iter_rows(values_only=True):
+        code, qty, rate = row[0], row[1], row[2]
+        if not isinstance(code, str) or len(code.strip()) < 2 or len(code.strip()) > 5:
+            continue  # skip header row ('4.5.26') and total row (None)
+        db_code = CODE_MAP.get(code.strip(), code.strip())
+        if db_code in SKIP_CODES:
+            continue
+        if isinstance(qty, (int, float)) and qty > 0 and isinstance(rate, (int, float)) and rate > 0:
+            stocks[db_code] = (qty, rate)
+    return stocks
+
+
 def make_time(i, n, h0, m0, h1, m1):
     """Distribute index i across n slots between (h0:m0) and (h1:m1)."""
     s0 = h0 * 60 + m0
@@ -163,7 +178,7 @@ def main():
         db.commit()
         print(f"  Rates      — inserted: {ins}, skipped: {sk}")
 
-        # ── DailyPosition ─────────────────────────────────────────────────────
+        # ── DailyPosition (today's carry-in = Apr 4 STOCKSLEFT) ──────────────
         ins = sk = 0
         for code, (qty, rate) in APR4_STOCKS.items():
             if db.query(DailyPosition).filter_by(date=TARGET_DATE, currency_code=code).first():
@@ -174,6 +189,20 @@ def main():
             ins += 1
         db.commit()
         print(f"  Positions  — inserted: {ins}, skipped: {sk}")
+
+        # ── DailyPosition next day (Apr 6 carry-in = Apr 5 STOCKSLEFT) ───────
+        next_date   = TARGET_DATE + timedelta(days=1)
+        next_stocks = read_stocksleft(wb)
+        ins = sk = 0
+        for code, (qty, rate) in next_stocks.items():
+            if db.query(DailyPosition).filter_by(date=next_date, currency_code=code).first():
+                sk += 1
+                continue
+            db.add(DailyPosition(date=next_date, currency_code=code,
+                                 carry_in_qty=qty, carry_in_rate=rate))
+            ins += 1
+        db.commit()
+        print(f"  Positions+1 ({next_date}) — inserted: {ins}, skipped: {sk}")
 
         # ── Transactions ──────────────────────────────────────────────────────
         ins = sk = 0
