@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
-from datetime import date as date_type, datetime
+from datetime import date as date_type, datetime, timedelta
 from typing import Optional
 
 from app.core.database import get_db
@@ -128,6 +128,47 @@ async def get_daily_report(
     opening_positions.sort(key=lambda x: (category_order.get(x["category"], 9), x["sort_order"]))
     total_opening_stock_php = round(total_opening_stock_php, 2)
 
+    # ── Stock summary (closing = next day's carry-in) ────────────────────────
+    next_date = target + timedelta(days=1)
+    closing_pos_map = {
+        p.currency_code: p
+        for p in db.query(DailyPosition).filter(DailyPosition.date == next_date).all()
+    }
+    opening_pos_map = {p["code"]: p for p in opening_positions}
+    stock_summary = []
+    all_codes = set(opening_pos_map) | set(by_currency)
+    for code in sorted(all_codes, key=lambda c: (
+        category_order.get((currencies.get(c) and currencies[c].category.value) or "OTHERS", 9),
+        currencies[c].sort_order if currencies.get(c) else 99,
+    )):
+        ccy = currencies.get(code)
+        op  = opening_pos_map.get(code)
+        txn = next((x for x in sorted_currencies if x["code"] == code), None)
+        cl  = closing_pos_map.get(code)
+        carry_in_qty  = op["carry_in_qty"]  if op  else 0.0
+        carry_in_rate = op["carry_in_rate"] if op  else 0.0
+        buy_qty  = txn["buy_qty"]  if txn else 0.0
+        buy_php  = txn["buy_php"]  if txn else 0.0
+        sell_qty = txn["sell_qty"] if txn else 0.0
+        closing_qty  = carry_in_qty + buy_qty - sell_qty
+        closing_rate = cl.carry_in_rate if cl else 0.0
+        closing_php  = round(closing_qty * closing_rate, 2)
+        stock_summary.append({
+            "code":          code,
+            "name":          ccy.name         if ccy else code,
+            "flag":          ccy.flag         if ccy else "",
+            "category":      ccy.category.value if ccy else "OTHERS",
+            "sort_order":    ccy.sort_order    if ccy else 99,
+            "decimal_places": ccy.decimal_places if ccy else 4,
+            "carry_in_qty":  carry_in_qty,
+            "buy_qty":       buy_qty,
+            "sell_qty":      sell_qty,
+            "closing_qty":   closing_qty,
+            "closing_rate":  closing_rate,
+            "closing_php":   closing_php,
+        })
+    total_closing_stock_php = round(sum(s["closing_php"] for s in stock_summary), 2)
+
     # ── Special credits ──────────────────────────────────────────────────────
     # Disbursements: credits given out today
     credits_today = (
@@ -182,8 +223,10 @@ async def get_daily_report(
         "total_sold_php":      round(total_sold,       2),
         "total_than":          round(total_than,       2),
         "total_commission":    round(total_commission, 2),
-        "opening_positions":       opening_positions,
-        "total_opening_stock_php": total_opening_stock_php,
+        "opening_positions":        opening_positions,
+        "total_opening_stock_php":  total_opening_stock_php,
+        "stock_summary":            stock_summary,
+        "total_closing_stock_php":  total_closing_stock_php,
         "by_currency":        sorted_currencies,
         "by_cashier":         sorted(by_cashier.values(), key=lambda x: x["cashier"]),
         "special_credits": {
