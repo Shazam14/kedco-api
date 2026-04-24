@@ -28,9 +28,14 @@ def _get_daily_avg(currency_code: str, today, db: Session) -> float:
         )
 
     position_row = db.query(DailyPosition).filter_by(date=today, currency_code=currency_code).first()
+    if not position_row:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Carry-in not set for {currency_code}. Please set opening positions first.",
+        )
     carry_in = CarryIn(
-        qty=position_row.carry_in_qty if position_row else 0,
-        rate=position_row.carry_in_rate if position_row else rate_row.buy_rate,
+        qty=position_row.carry_in_qty,
+        rate=position_row.carry_in_rate,
     )
 
     # Get all buys recorded today for this currency
