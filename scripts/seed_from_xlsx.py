@@ -32,7 +32,7 @@ from app.models.currency import DailyRate, DailyPosition
 from app.models.transaction import Transaction, TxnType, TxnSource
 
 CODE_MAP   = {'NTD': 'TWD', 'QR': 'QAR', 'KD': 'KWD'}
-SKIP_CODES = {'MOP', 'BHD', 'BND', 'OMR', 'TYR'}
+SKIP_CODES = {'BHD', 'BND', 'OMR', 'TYR'}
 
 PAIRS_2ND = [
     ('AED',1,2), ('AUD',3,4), ('CAD',5,6), ('CHF',7,8),
@@ -55,7 +55,7 @@ def is_num(v):
     return isinstance(v, (int, float)) and v > 0
 
 
-def parse_main(ws):
+def parse_main(ws, stop_at_gap=True):
     pairs = [('USD', 2, 3), ('JPY', 5, 6), ('KRW', 8, 9)]
     txns, empty = [], 0
     for row in list(ws.iter_rows(values_only=True))[1:]:
@@ -66,13 +66,14 @@ def parse_main(ws):
             if is_num(q) and is_num(r):
                 txns.append((code, q, r))
                 found = True
-        empty = 0 if found else empty + 1
-        if empty >= 2:
-            break
+        if stop_at_gap:
+            empty = 0 if found else empty + 1
+            if empty >= 2:
+                break
     return txns
 
 
-def parse_pairs(ws, pairs, data_start):
+def parse_pairs(ws, pairs, data_start, stop_at_gap=True):
     txns, empty = [], 0
     for row in list(ws.iter_rows(values_only=True))[data_start:]:
         found = False
@@ -84,9 +85,10 @@ def parse_pairs(ws, pairs, data_start):
             if is_num(q) and is_num(r):
                 txns.append((norm(code), q, r))
                 found = True
-        empty = 0 if found else empty + 1
-        if empty >= 2:
-            break
+        if stop_at_gap:
+            empty = 0 if found else empty + 1
+            if empty >= 2:
+                break
     return txns
 
 
@@ -134,15 +136,20 @@ def main():
 
     wb = openpyxl.load_workbook(xlsx_path, data_only=True)
 
+    # When prev_xlsx is provided, carry-in rows are stripped explicitly so we can
+    # parse the full sheet (no early exit). Without prev_xlsx, the 2-empty-row stop
+    # naturally excludes the carry-in block at the end.
+    stop = prev_xlsx is None
+
     buy = (
-        [(TxnType.BUY, c, q, r) for c, q, r in parse_main(wb['BUY x MAIN'])]
-      + [(TxnType.BUY, c, q, r) for c, q, r in parse_pairs(wb['BUY x 2ND'],    PAIRS_2ND,    2)]
-      + [(TxnType.BUY, c, q, r) for c, q, r in parse_pairs(wb['BUY  x OTHERS'], PAIRS_OTHERS, 2)]
+        [(TxnType.BUY, c, q, r) for c, q, r in parse_main(wb['BUY x MAIN'], stop)]
+      + [(TxnType.BUY, c, q, r) for c, q, r in parse_pairs(wb['BUY x 2ND'],    PAIRS_2ND,    2, stop)]
+      + [(TxnType.BUY, c, q, r) for c, q, r in parse_pairs(wb['BUY  x OTHERS'], PAIRS_OTHERS, 2, stop)]
     )
     sell = (
-        [(TxnType.SELL, c, q, r) for c, q, r in parse_main(wb['SELL x MAIN'])]
-      + [(TxnType.SELL, c, q, r) for c, q, r in parse_pairs(wb['SELL  x 2ND'],   PAIRS_2ND,    1)]
-      + [(TxnType.SELL, c, q, r) for c, q, r in parse_pairs(wb['SELL x OTHERS'], PAIRS_OTHERS, 1)]
+        [(TxnType.SELL, c, q, r) for c, q, r in parse_main(wb['SELL x MAIN'], stop)]
+      + [(TxnType.SELL, c, q, r) for c, q, r in parse_pairs(wb['SELL  x 2ND'],   PAIRS_2ND,    1, stop)]
+      + [(TxnType.SELL, c, q, r) for c, q, r in parse_pairs(wb['SELL x OTHERS'], PAIRS_OTHERS, 1, stop)]
     )
 
     # Carry-in: from prev xlsx STOCKSLEFT or from DB
@@ -153,11 +160,20 @@ def main():
     else:
         carry_in = None  # will read from DB per currency below
 
-    # The last row of each BUY sheet is the previous day's carry-in stock summary.
-    # Strip any BUY that exactly matches a carry_in entry — that stock already lives
-    # in DailyPosition and must not be double-counted in _get_daily_avg.
+    # Each BUY sheet has the previous day's carry-in as a summary row (same qty/rate as
+    # DailyPosition). Strip any BUY that exactly matches a carry_in entry so it isn't
+    # double-counted. When prev_xlsx is absent, fall back to existing DB positions.
     if carry_in:
         carry_in_set = {(code, qty, rate) for code, (qty, rate) in carry_in.items()}
+    else:
+        _db = SessionLocal()
+        try:
+            _pos = _db.query(DailyPosition).filter_by(date=target_date).all()
+            carry_in_set = {(p.currency_code, p.carry_in_qty, p.carry_in_rate) for p in _pos}
+        finally:
+            _db.close()
+
+    if carry_in_set:
         buy_clean = [(typ, c, q, r) for typ, c, q, r in buy if (c, q, r) not in carry_in_set]
         removed = len(buy) - len(buy_clean)
         if removed:
