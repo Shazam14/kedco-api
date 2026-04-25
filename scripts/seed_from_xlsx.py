@@ -73,9 +73,11 @@ def parse_main(ws, stop_at_gap=True):
     return txns
 
 
-def parse_pairs(ws, pairs, data_start, stop_at_gap=True):
+def parse_pairs(ws, pairs, data_start, stop_at_gap=True, max_rows=None):
     txns, empty = [], 0
-    for row in list(ws.iter_rows(values_only=True))[data_start:]:
+    for i, row in enumerate(list(ws.iter_rows(values_only=True))[data_start:]):
+        if max_rows is not None and i >= max_rows:
+            break
         found = False
         for code, qc, rc in pairs:
             if code in SKIP_CODES:
@@ -147,9 +149,9 @@ def main():
       + [(TxnType.BUY, c, q, r) for c, q, r in parse_pairs(wb['BUY  x OTHERS'], PAIRS_OTHERS, 2, stop)]
     )
     sell = (
-        [(TxnType.SELL, c, q, r) for c, q, r in parse_main(wb['SELL x MAIN'], stop)]
-      + [(TxnType.SELL, c, q, r) for c, q, r in parse_pairs(wb['SELL  x 2ND'],   PAIRS_2ND,    1, stop)]
-      + [(TxnType.SELL, c, q, r) for c, q, r in parse_pairs(wb['SELL x OTHERS'], PAIRS_OTHERS, 1, stop)]
+        [(TxnType.SELL, c, q, r) for c, q, r in parse_main(wb['SELL x MAIN'], True)]
+      + [(TxnType.SELL, c, q, r) for c, q, r in parse_pairs(wb['SELL  x 2ND'],   PAIRS_2ND,    1, True)]
+      + [(TxnType.SELL, c, q, r) for c, q, r in parse_pairs(wb['SELL x OTHERS'], PAIRS_OTHERS, 1, True)]
     )
 
     # Carry-in: from prev xlsx STOCKSLEFT or from DB
