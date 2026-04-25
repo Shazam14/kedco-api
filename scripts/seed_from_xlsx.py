@@ -87,6 +87,10 @@ def parse_pairs(ws, pairs, data_start, stop_at_gap=True, max_rows=None):
             if is_num(q) and is_num(r):
                 txns.append((norm(code), q, r))
                 found = True
+            elif is_num(q) and not is_num(r):
+                # qty present but no rate — excess/windfall (received for free)
+                txns.append((norm(code), q, None))
+                found = True
         if stop_at_gap:
             empty = 0 if found else empty + 1
             if empty >= 2:
@@ -161,10 +165,14 @@ def main():
     # naturally excludes the carry-in block at the end.
     stop = prev_xlsx is None
 
+    def classify_buy(c, q, r):
+        """BUY when rate is present; EXCESS when qty exists but rate is missing."""
+        return (TxnType.EXCESS, c, q, 0) if r is None else (TxnType.BUY, c, q, r)
+
     buy = (
-        [(TxnType.BUY, c, q, r) for c, q, r in parse_main(ws('BUY x MAIN'), stop)]
-      + [(TxnType.BUY, c, q, r) for c, q, r in parse_pairs(ws('BUY x 2ND'),    PAIRS_2ND,    2, stop)]
-      + [(TxnType.BUY, c, q, r) for c, q, r in parse_pairs(ws('BUY  x OTHERS'), PAIRS_OTHERS, 2, stop)]
+        [classify_buy(c, q, r) for c, q, r in parse_main(ws('BUY x MAIN'), stop)]
+      + [classify_buy(c, q, r) for c, q, r in parse_pairs(ws('BUY x 2ND'),    PAIRS_2ND,    2, stop)]
+      + [classify_buy(c, q, r) for c, q, r in parse_pairs(ws('BUY  x OTHERS'), PAIRS_OTHERS, 2, stop)]
     )
     sell = (
         [(TxnType.SELL, c, q, r) for c, q, r in parse_main(ws('SELL x MAIN'), True)]
@@ -282,17 +290,26 @@ def main():
                 t_str   = make_time(i-mid, total-mid, 13, 0, 17, 30)
                 cashier = pm_cashier
 
-            avg  = daily_avg.get(code, rate)
-            than = round((rate - avg) * qty, 4) if typ == TxnType.SELL else 0.0
-
-            db.add(Transaction(
-                id=txn_id, date=target_date, time=t_str,
-                type=typ, source=TxnSource.COUNTER,
-                currency_code=code, foreign_amt=qty, rate=rate,
-                php_amt=round(qty * rate, 2),
-                daily_avg_cost=avg, than=than,
-                cashier=cashier, customer=None,
-            ))
+            if typ == TxnType.EXCESS:
+                db.add(Transaction(
+                    id=txn_id, date=target_date, time=t_str,
+                    type=typ, source=TxnSource.COUNTER,
+                    currency_code=code, foreign_amt=qty, rate=0.0,
+                    php_amt=0.0, daily_avg_cost=0.0, than=0.0,
+                    cashier=cashier, customer=None,
+                    note='Excess received — no rate (from Excel)',
+                ))
+            else:
+                avg  = daily_avg.get(code, rate)
+                than = round((rate - avg) * qty, 4) if typ == TxnType.SELL else 0.0
+                db.add(Transaction(
+                    id=txn_id, date=target_date, time=t_str,
+                    type=typ, source=TxnSource.COUNTER,
+                    currency_code=code, foreign_amt=qty, rate=rate,
+                    php_amt=round(qty * rate, 2),
+                    daily_avg_cost=avg, than=than,
+                    cashier=cashier, customer=None,
+                ))
             ins += 1
 
         db.commit()

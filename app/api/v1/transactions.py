@@ -38,9 +38,12 @@ def _get_daily_avg(currency_code: str, today, db: Session) -> float:
         rate=position_row.carry_in_rate,
     )
 
-    # Get all buys recorded today for this currency
-    buys_today = db.query(Transaction).filter_by(
-        date=today, currency_code=currency_code, type="BUY"
+    # Get all buys + excess received today for this currency
+    # EXCESS entries have rate=0 (free stock) — included so avg cost is correct
+    buys_today = db.query(Transaction).filter(
+        Transaction.date == today,
+        Transaction.currency_code == currency_code,
+        Transaction.type.in_(["BUY", "EXCESS"]),
     ).all()
     today_buys = [TodayBuy(qty=t.foreign_amt, rate=t.rate) for t in buys_today]
 
@@ -57,11 +60,19 @@ async def create_transaction(
     today = get_today()
     now = datetime.now().strftime("%I:%M %p")
 
-    daily_avg = _get_daily_avg(txn.currency, today, db)
-    php_amt = round(txn.foreign_amt * txn.rate, 2)
-    than = round((txn.rate - daily_avg) * txn.foreign_amt, 2) if txn.type == "SELL" else 0.0
+    is_excess = txn.type == "EXCESS"
 
-    official_rate = txn.official_rate  # None when cashier left guide rate blank → no commission
+    if is_excess:
+        # Excess: foreign currency received for free — no PHP paid, no THAN
+        daily_avg = 0.0
+        php_amt   = 0.0
+        than      = 0.0
+    else:
+        daily_avg = _get_daily_avg(txn.currency, today, db)
+        php_amt   = round(txn.foreign_amt * txn.rate, 2)
+        than      = round((txn.rate - daily_avg) * txn.foreign_amt, 2) if txn.type == "SELL" else 0.0
+
+    official_rate = txn.official_rate if not is_excess else None
 
     # Generate ID: OR-XXXXXXXX for counter, RD-XXXXXXXX for rider
     prefix = "RD" if txn.source == "RIDER" else "OR"
@@ -75,7 +86,7 @@ async def create_transaction(
         source=txn.source,
         currency_code=txn.currency,
         foreign_amt=txn.foreign_amt,
-        rate=txn.rate,
+        rate=0.0 if is_excess else txn.rate,
         php_amt=php_amt,
         daily_avg_cost=daily_avg,
         than=than,
@@ -87,6 +98,7 @@ async def create_transaction(
         referrer=txn.referrer or None,
         payment_tag=txn.payment_tag or None,
         reference_date=txn.reference_date,
+        note=txn.note or None,
     )
     db.add(record)
     db.commit()

@@ -67,10 +67,11 @@ async def get_dashboard_summary(
     # 4. Exclude demo accounts from all calculations
     demo_users = db.query(User.username).filter(User.is_demo == True).scalar_subquery()
 
-    # 5. All buys today — used for position computation
+    # 5. All buys + excess today — used for position computation
+    # EXCESS entries (rate=0, php=0) add to stock without affecting PHP totals
     buys_today = (
         db.query(Transaction)
-        .filter(Transaction.date == today, Transaction.type == "BUY")
+        .filter(Transaction.date == today, Transaction.type.in_(["BUY", "EXCESS"]))
         .filter(~Transaction.cashier.in_(demo_users))
         .all()
     )
@@ -78,8 +79,7 @@ async def get_dashboard_summary(
     for t in buys_today:
         buys_by_currency.setdefault(t.currency_code, []).append(t)
 
-    # 6. Aggregate totals across ALL transactions today (not just display limit)
-    #    Uses the composite index on (date, type) for each filter.
+    # 6. Aggregate totals — EXCESS excluded from PHP totals (no money changed hands)
     sells_today = (
         db.query(Transaction)
         .filter(Transaction.date == today, Transaction.type == "SELL")
@@ -87,7 +87,7 @@ async def get_dashboard_summary(
         .all()
     )
     total_than   = sum(t.than    for t in sells_today)
-    total_bought = sum(t.php_amt for t in buys_today)
+    total_bought = sum(t.php_amt for t in buys_today if t.type == "BUY")
     total_sold   = sum(t.php_amt for t in sells_today)
 
     # 7. Compute positions for currencies that have a rate set today

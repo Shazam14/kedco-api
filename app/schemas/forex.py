@@ -11,19 +11,20 @@ class CurrencyRateIn(BaseModel):
 
 
 class TransactionIn(BaseModel):
-    type: Literal["BUY", "SELL"]
+    type: Literal["BUY", "SELL", "EXCESS"]
     source: Literal["COUNTER", "RIDER"]
     currency: str
     foreign_amt: float
-    rate: float
+    rate: float                           # 0.0 for EXCESS entries
     cashier: str
     customer: Optional[str] = None
     payment_mode: Optional[str] = "CASH"
     bank_id: Optional[int] = None
-    official_rate: Optional[float] = None  # guide rate the cashier was given
+    official_rate: Optional[float] = None
     referrer: Optional[str] = None
-    payment_tag: Optional[str] = None    # ADVANCE | LATE
+    payment_tag: Optional[str] = None
     reference_date: Optional[date] = None
+    note: Optional[str] = None            # required for EXCESS, optional otherwise
 
 
 class TransactionOut(BaseModel):

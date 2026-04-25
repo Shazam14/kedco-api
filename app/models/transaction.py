@@ -8,8 +8,9 @@ from app.core.database import Base
 
 
 class TxnType(str, enum.Enum):
-    BUY = "BUY"
-    SELL = "SELL"
+    BUY    = "BUY"
+    SELL   = "SELL"
+    EXCESS = "EXCESS"  # foreign currency received with no PHP paid (windfall/overage)
 
 
 class TxnSource(str, enum.Enum):
@@ -62,6 +63,7 @@ class Transaction(Base):
     confirmed_by   = Column(String(50), nullable=True)   # admin who confirmed pending payment
     confirmed_at   = Column(DateTime(timezone=True), nullable=True)
     batch_id       = Column(UUID(as_uuid=True), nullable=True, index=True)
+    note           = Column(String(300), nullable=True)      # free-text note, used for EXCESS entries
     created_at     = Column(DateTime(timezone=True), server_default=func.now())
 
 
