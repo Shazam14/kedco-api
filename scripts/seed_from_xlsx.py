@@ -138,20 +138,38 @@ def main():
 
     wb = openpyxl.load_workbook(xlsx_path, data_only=True)
 
+    def ws(name):
+        """Return worksheet by name, tolerating case/spacing/typo variants (e.g. 'BU X MAIN')."""
+        if name in wb.sheetnames:
+            return wb[name]
+        # Normalise both sides: lowercase, strip, collapse whitespace
+        def norm(s):
+            return ' '.join(s.lower().split())
+        n = norm(name)
+        for s in wb.sheetnames:
+            if norm(s) == n:
+                return wb[s]
+        # Handle 'BU' typo for 'BUY' (and vice-versa)
+        n2 = n.replace('buy', 'bu')
+        for s in wb.sheetnames:
+            if norm(s).replace('buy', 'bu') == n2:
+                return wb[s]
+        raise KeyError(f"Worksheet '{name}' not found in {wb.sheetnames}")
+
     # When prev_xlsx is provided, carry-in rows are stripped explicitly so we can
     # parse the full sheet (no early exit). Without prev_xlsx, the 2-empty-row stop
     # naturally excludes the carry-in block at the end.
     stop = prev_xlsx is None
 
     buy = (
-        [(TxnType.BUY, c, q, r) for c, q, r in parse_main(wb['BUY x MAIN'], stop)]
-      + [(TxnType.BUY, c, q, r) for c, q, r in parse_pairs(wb['BUY x 2ND'],    PAIRS_2ND,    2, stop)]
-      + [(TxnType.BUY, c, q, r) for c, q, r in parse_pairs(wb['BUY  x OTHERS'], PAIRS_OTHERS, 2, stop)]
+        [(TxnType.BUY, c, q, r) for c, q, r in parse_main(ws('BUY x MAIN'), stop)]
+      + [(TxnType.BUY, c, q, r) for c, q, r in parse_pairs(ws('BUY x 2ND'),    PAIRS_2ND,    2, stop)]
+      + [(TxnType.BUY, c, q, r) for c, q, r in parse_pairs(ws('BUY  x OTHERS'), PAIRS_OTHERS, 2, stop)]
     )
     sell = (
-        [(TxnType.SELL, c, q, r) for c, q, r in parse_main(wb['SELL x MAIN'], True)]
-      + [(TxnType.SELL, c, q, r) for c, q, r in parse_pairs(wb['SELL  x 2ND'],   PAIRS_2ND,    1, True)]
-      + [(TxnType.SELL, c, q, r) for c, q, r in parse_pairs(wb['SELL x OTHERS'], PAIRS_OTHERS, 1, True)]
+        [(TxnType.SELL, c, q, r) for c, q, r in parse_main(ws('SELL x MAIN'), True)]
+      + [(TxnType.SELL, c, q, r) for c, q, r in parse_pairs(ws('SELL  x 2ND'),   PAIRS_2ND,    1, True)]
+      + [(TxnType.SELL, c, q, r) for c, q, r in parse_pairs(ws('SELL x OTHERS'), PAIRS_OTHERS, 1, True)]
     )
 
     # Carry-in: from prev xlsx STOCKSLEFT or from DB
