@@ -1,20 +1,19 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy import func
 from sqlalchemy.orm import Session
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 
 from app.core.database import get_db
 from app.models.currency import Currency, DailyRate, DailyPosition
-from app.models.transaction import Transaction
+from app.models.transaction import Transaction, TxnSource, TxnType, RiderDispatch, DispatchStatus
+from app.models.shift import TellerShift, ShiftStatus
 from app.models.user import User
-from app.schemas.forex import DashboardSummaryOut, CurrencyPositionOut, TransactionOut
+from app.schemas.forex import DashboardSummaryOut, CurrencyPositionOut, TransactionOut, CapitalTrendPoint
 from app.services.forex import compute_position, CarryIn, TodayBuy
 from app.api.v1.auth import get_current_user, TokenData
 from app.core.today import get_today
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
-
-OPENING_CAPITAL = 0  # TODO: move to DB config table — set by admin on first use
 
 # ── Simple 30-second in-memory cache ─────────────────────────────────────────
 _cache: dict = {}
@@ -145,20 +144,85 @@ async def get_dashboard_summary(
     ]
 
     total_stock = sum(p.stock_value_php for p in computed_positions)
-    php_cash    = OPENING_CAPITAL  # TODO: track actual cash movements
+
+    # 9. PHP Cash — sum across all cashier shifts + active rider dispatches
+    shifts_today = (
+        db.query(TellerShift)
+        .filter(Shift.date == today)
+        .filter(~Shift.cashier.in_(demo_users))
+        .all()
+    )
+
+    # Index counter transactions by cashier for O(1) shift lookup
+    counter_by_cashier: dict[str, list[Transaction]] = {}
+    for t in buys_today + sells_today:
+        if t.source == TxnSource.COUNTER:
+            counter_by_cashier.setdefault(t.cashier, []).append(t)
+
+    php_cash = 0.0
+    for shift in shifts_today:
+        if shift.status == ShiftStatus.CLOSED and shift.closing_cash_php is not None:
+            # Use actual counted cash for closed shifts
+            php_cash += shift.closing_cash_php
+        else:
+            # Open shift: opening + SELLs - BUYs + replenishments
+            txns = counter_by_cashier.get(shift.cashier, [])
+            sell_php = sum(t.php_amt for t in txns if t.type == TxnType.SELL)
+            buy_php  = sum(t.php_amt for t in txns if t.type == TxnType.BUY)
+            replen   = sum(r.amount_php for r in shift.replenishments)
+            php_cash += shift.opening_cash_php + sell_php - buy_php + replen
+
+    # Active riders in the field: their starting cash + SELL - BUY
+    active_dispatches = (
+        db.query(RiderDispatch)
+        .filter(RiderDispatch.date == today, RiderDispatch.status == DispatchStatus.IN_FIELD)
+        .all()
+    )
+    rider_by_username: dict[str, list[Transaction]] = {}
+    for t in buys_today + sells_today:
+        if t.source == TxnSource.RIDER:
+            rider_by_username.setdefault(t.cashier, []).append(t)
+
+    for dispatch in active_dispatches:
+        txns     = rider_by_username.get(dispatch.rider_username, [])
+        sell_php = sum(t.php_amt for t in txns if t.type == TxnType.SELL)
+        buy_php  = sum(t.php_amt for t in txns if t.type == TxnType.BUY)
+        php_cash += dispatch.cash_php + sell_php - buy_php
+
+    opening_capital = php_cash + total_stock
+
+    # 10. Capital trend — last 14 days of stock value from daily_positions + today live
+    trend_start = today - timedelta(days=13)
+    trend_rows = (
+        db.query(
+            DailyPosition.date,
+            func.sum(DailyPosition.carry_in_qty * DailyPosition.carry_in_rate).label('stock_val')
+        )
+        .filter(DailyPosition.date >= trend_start, DailyPosition.date < today)
+        .group_by(DailyPosition.date)
+        .order_by(DailyPosition.date)
+        .all()
+    )
+    capital_trend = [
+        CapitalTrendPoint(date=row.date.strftime('%b %d'), value=round(row.stock_val or 0, 0))
+        for row in trend_rows
+    ]
+    # Append today's live value
+    capital_trend.append(CapitalTrendPoint(date=today.strftime('%b %d'), value=round(total_stock + php_cash, 0)))
 
     result_out = DashboardSummaryOut(
         date=today,
-        opening_capital=OPENING_CAPITAL,
-        php_cash=php_cash,
+        opening_capital=opening_capital,
+        php_cash=round(php_cash, 2),
         total_stock_value=total_stock,
-        total_capital=php_cash + total_stock,
+        total_capital=round(php_cash + total_stock, 2),
         total_unrealized=sum(p.unrealized_php for p in computed_positions),
         total_than_today=total_than,
         total_bought_today=total_bought,
         total_sold_today=total_sold,
         positions=computed_positions,
         recent_transactions=recent_out,
+        capital_trend=capital_trend,
     )
 
     _set_cached(cache_key, result_out)

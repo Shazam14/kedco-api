@@ -32,7 +32,7 @@ from app.models.currency import DailyRate, DailyPosition
 from app.models.transaction import Transaction, TxnType, TxnSource
 
 CODE_MAP   = {'NTD': 'TWD', 'QR': 'QAR', 'KD': 'KWD'}
-SKIP_CODES = {'BHD', 'BND', 'OMR', 'TYR'}
+SKIP_CODES = {'BHD', 'BND', 'OMR'}  # TYR activated 2026-04-25
 
 PAIRS_2ND = [
     ('AED',1,2), ('AUD',3,4), ('CAD',5,6), ('CHF',7,8),
@@ -190,6 +190,8 @@ def main():
         try:
             _pos = _db.query(DailyPosition).filter_by(date=target_date).all()
             carry_in_set = {(p.currency_code, p.carry_in_qty, p.carry_in_rate) for p in _pos}
+            # Preserve carry_in so --force can recreate positions after wiping them
+            carry_in = {p.currency_code: (p.carry_in_qty, p.carry_in_rate) for p in _pos}
         finally:
             _db.close()
 

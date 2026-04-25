@@ -92,6 +92,11 @@ class TransactionPatch(BaseModel):
     reference_date: Optional[date]  = None
 
 
+class CapitalTrendPoint(BaseModel):
+    date: str
+    value: float
+
+
 class DashboardSummaryOut(BaseModel):
     date: date
     opening_capital: float
@@ -104,3 +109,4 @@ class DashboardSummaryOut(BaseModel):
     total_sold_today: float
     positions: List[CurrencyPositionOut]
     recent_transactions: List[TransactionOut]
+    capital_trend: List[CapitalTrendPoint]
