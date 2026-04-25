@@ -25,6 +25,8 @@ class TransactionIn(BaseModel):
     payment_tag: Optional[str] = None
     reference_date: Optional[date] = None
     note: Optional[str] = None            # required for EXCESS, optional otherwise
+    terminal_id: Optional[str] = None
+    branch_id: Optional[str] = None
 
 
 class TransactionOut(BaseModel):
@@ -46,6 +48,8 @@ class TransactionOut(BaseModel):
     payment_tag: Optional[str] = None
     reference_date: Optional[date] = None
     batch_id: Optional[UUID] = None
+    terminal_id: Optional[str] = None
+    branch_id: Optional[str] = None
 
 
 class BatchItemIn(BaseModel):
@@ -62,6 +66,8 @@ class TransactionBatchIn(BaseModel):
     payment_mode: Optional[str] = "CASH"
     bank_id: Optional[int] = None
     referrer: Optional[str] = None
+    terminal_id: Optional[str] = None
+    branch_id: Optional[str] = None
     items: List[BatchItemIn]
 
 

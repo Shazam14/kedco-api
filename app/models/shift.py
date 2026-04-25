@@ -33,6 +33,8 @@ class TellerShift(Base):
     expected_cash_php = Column(Float, nullable=True)            # computed: opening + SELLs - BUYs
     cash_variance     = Column(Float, nullable=True)            # closing_cash - expected_cash
     notes             = Column(String(300), nullable=True)
+    terminal_id       = Column(String(50), nullable=True)
+    branch_id         = Column(String(20), nullable=True)
     created_at        = Column(DateTime(timezone=True), server_default=func.now())
     replenishments    = relationship("CashReplenishment", back_populates="shift", order_by="CashReplenishment.added_at")
 

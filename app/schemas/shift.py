@@ -6,6 +6,8 @@ from datetime import date, datetime
 class ShiftOpenIn(BaseModel):
     opening_cash_php: float
     notes: Optional[str] = None
+    terminal_id: Optional[str] = None
+    branch_id: Optional[str] = None
 
 
 class ShiftCloseIn(BaseModel):
@@ -38,6 +40,8 @@ class ShiftOut(BaseModel):
     expected_cash_php: Optional[float] = None
     cash_variance: Optional[float] = None
     notes: Optional[str] = None
+    terminal_id: Optional[str] = None
+    branch_id: Optional[str] = None
     # summary fields
     txn_count: Optional[int] = None
     total_sold_php: Optional[float] = None

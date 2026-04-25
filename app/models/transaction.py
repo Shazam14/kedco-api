@@ -64,6 +64,8 @@ class Transaction(Base):
     confirmed_at   = Column(DateTime(timezone=True), nullable=True)
     batch_id       = Column(UUID(as_uuid=True), nullable=True, index=True)
     note           = Column(String(300), nullable=True)      # free-text note, used for EXCESS entries
+    terminal_id    = Column(String(50), nullable=True)        # device label e.g. "Counter 1", "Phone"
+    branch_id      = Column(String(20), nullable=True)        # branch code e.g. "MAIN", "CTS"
     created_at     = Column(DateTime(timezone=True), server_default=func.now())
 
 

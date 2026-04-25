@@ -45,6 +45,8 @@ def _shift_to_out(shift: TellerShift, db: Session) -> ShiftOut:
         expected_cash_php=shift.expected_cash_php,
         cash_variance=shift.cash_variance,
         notes=shift.notes,
+        terminal_id=shift.terminal_id,
+        branch_id=shift.branch_id,
         txn_count=len(txns),
         total_sold_php=round(total_sold, 2),
         total_bought_php=round(total_bought, 2),
@@ -87,6 +89,8 @@ async def open_shift(
         status=ShiftStatus.OPEN,
         opening_cash_php=body.opening_cash_php,
         notes=body.notes,
+        terminal_id=body.terminal_id or None,
+        branch_id=body.branch_id or None,
     )
     db.add(shift)
     db.commit()

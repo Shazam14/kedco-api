@@ -99,6 +99,8 @@ async def create_transaction(
         payment_tag=txn.payment_tag or None,
         reference_date=txn.reference_date,
         note=txn.note or None,
+        terminal_id=txn.terminal_id or None,
+        branch_id=txn.branch_id or None,
     )
     db.add(record)
     db.commit()
@@ -122,6 +124,8 @@ async def create_transaction(
         referrer=record.referrer,
         payment_tag=record.payment_tag,
         reference_date=record.reference_date,
+        terminal_id=record.terminal_id,
+        branch_id=record.branch_id,
     )
 
 
@@ -153,6 +157,8 @@ async def create_batch_transaction(
             official_rate=item.official_rate,
             referrer=batch.referrer or None,
             batch_id=batch_uuid,
+            terminal_id=batch.terminal_id or None,
+            branch_id=batch.branch_id or None,
         )
         db.add(record)
         records.append(record)
