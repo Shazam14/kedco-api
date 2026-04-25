@@ -148,8 +148,8 @@ async def get_dashboard_summary(
     # 9. PHP Cash — sum across all cashier shifts + active rider dispatches
     shifts_today = (
         db.query(TellerShift)
-        .filter(Shift.date == today)
-        .filter(~Shift.cashier.in_(demo_users))
+        .filter(TellerShift.date == today)
+        .filter(~TellerShift.cashier.in_(demo_users))
         .all()
     )
 
