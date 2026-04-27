@@ -3,6 +3,8 @@ from typing import List, Optional, Literal
 from datetime import date, datetime
 from uuid import UUID
 
+_Date = date  # alias — prevents Pydantic from resolving 'date' against the field's own default (None)
+
 
 class CurrencyRateIn(BaseModel):
     code: str
@@ -50,7 +52,7 @@ class TransactionOut(BaseModel):
     batch_id: Optional[UUID] = None
     terminal_id: Optional[str] = None
     branch_id: Optional[str] = None
-    date: Optional[date] = None
+    date: Optional[_Date] = None
 
 
 class BatchItemIn(BaseModel):
