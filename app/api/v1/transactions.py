@@ -1,6 +1,7 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from datetime import datetime, date
+from typing import Optional
 import uuid
 
 from app.core.database import get_db
@@ -298,3 +299,30 @@ async def edit_transaction(
         official_rate=record.official_rate, referrer=record.referrer,
         payment_tag=record.payment_tag, reference_date=record.reference_date,
     )
+
+
+@router.get("/commissions", response_model=list[TransactionOut])
+async def get_commissions(
+    date_from: Optional[date] = Query(None),
+    date_to: Optional[date] = Query(None),
+    current_user: TokenData = Depends(require_role("admin")),
+    db: Session = Depends(get_db),
+):
+    q = db.query(Transaction).filter(Transaction.official_rate.isnot(None))
+    if date_from:
+        q = q.filter(Transaction.date >= date_from)
+    if date_to:
+        q = q.filter(Transaction.date <= date_to)
+    rows = q.order_by(Transaction.date.desc(), Transaction.created_at.desc()).all()
+    return [
+        TransactionOut(
+            id=r.id, time=r.time, type=r.type, source=r.source,
+            currency=r.currency_code, foreign_amt=r.foreign_amt,
+            rate=r.rate, php_amt=r.php_amt, than=r.than,
+            cashier=r.cashier, customer=r.customer,
+            payment_mode=r.payment_mode,
+            official_rate=r.official_rate, referrer=r.referrer,
+            date=r.date,
+        )
+        for r in rows
+    ]

@@ -50,6 +50,7 @@ class TransactionOut(BaseModel):
     batch_id: Optional[UUID] = None
     terminal_id: Optional[str] = None
     branch_id: Optional[str] = None
+    date: Optional[date] = None
 
 
 class BatchItemIn(BaseModel):
