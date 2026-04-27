@@ -12,7 +12,7 @@ router = APIRouter(prefix="/currencies", tags=["currencies"])
 
 @router.get("/")
 async def list_currencies(
-    current_user: TokenData = Depends(require_role("admin", "cashier")),
+    current_user: TokenData = Depends(require_role("admin", "cashier", "supervisor")),
     db: Session = Depends(get_db),
 ):
     """All active currencies with today's rates if already set."""
