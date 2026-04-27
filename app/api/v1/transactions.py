@@ -55,7 +55,7 @@ def _get_daily_avg(currency_code: str, today, db: Session) -> float:
 @router.post("/", response_model=TransactionOut, status_code=status.HTTP_201_CREATED)
 async def create_transaction(
     txn: TransactionIn,
-    current_user: TokenData = Depends(require_role("admin", "cashier", "rider")),
+    current_user: TokenData = Depends(require_role("admin", "cashier", "supervisor", "rider")),
     db: Session = Depends(get_db),
 ):
     today = get_today()
