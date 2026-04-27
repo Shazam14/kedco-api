@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from typing import List
 from app.core.database import get_db
 from app.core.today import get_today
-from app.models.currency import DailyRate, Currency
+from app.models.currency import DailyRate, DailyPosition, Currency
 from app.schemas.forex import CurrencyRateIn
 from app.api.v1.auth import require_role, TokenData
 from datetime import date
@@ -89,3 +89,39 @@ async def set_today_rates(
 
     db.commit()
     return {"message": f"{upserted} rates saved for {today}", "by": current_user.username}
+
+
+@router.post("/from-carry-in", status_code=status.HTTP_201_CREATED)
+async def set_rates_from_carry_in(
+    current_user: TokenData = Depends(require_role("admin")),
+    db: Session = Depends(get_db),
+):
+    """Copy today's carry-in rates into DailyRate. Use when skipping manual rate entry."""
+    today = get_today()
+    positions = db.query(DailyPosition).filter_by(date=today).all()
+    if not positions:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No carry-in positions found for today. Set opening positions first.",
+        )
+
+    upserted = 0
+    for pos in positions:
+        rate = pos.carry_in_rate or 0
+        existing = db.query(DailyRate).filter_by(date=today, currency_code=pos.currency_code).first()
+        if existing:
+            existing.buy_rate  = rate
+            existing.sell_rate = rate
+            existing.set_by    = current_user.username
+        else:
+            db.add(DailyRate(
+                date=today,
+                currency_code=pos.currency_code,
+                buy_rate=rate,
+                sell_rate=rate,
+                set_by=current_user.username,
+            ))
+        upserted += 1
+
+    db.commit()
+    return {"message": f"{upserted} rates copied from carry-in for {today}", "by": current_user.username}
