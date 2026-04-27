@@ -20,6 +20,7 @@ EXPENSE_CATEGORIES = [
     "MAINTENANCE",
     "SALARY_ADVANCE",
     "BANK_CHARGES",
+    "COMMISSION_PAYOUT",
     "OTHERS",
 ]
 
@@ -32,6 +33,7 @@ class Expense(Base):
     amount_php  = Column(Float, nullable=False)
     category    = Column(String(30), nullable=False)
     description = Column(String(200), nullable=True)
+    referrer    = Column(String(100), nullable=True)
     recorded_by = Column(String(50), nullable=False)
     status      = Column(Enum(ExpenseStatus), default=ExpenseStatus.PENDING, nullable=False)
     approved_by = Column(String(50), nullable=True)
