@@ -1,5 +1,4 @@
 from sqlalchemy import Column, String, Float, Date, DateTime, Enum
-from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 import uuid
 import enum
@@ -28,7 +27,7 @@ EXPENSE_CATEGORIES = [
 class Expense(Base):
     __tablename__ = "expenses"
 
-    id          = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id          = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
     date        = Column(Date, nullable=False, index=True)
     amount_php  = Column(Float, nullable=False)
     category    = Column(String(30), nullable=False)
