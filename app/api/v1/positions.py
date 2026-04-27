@@ -20,7 +20,7 @@ class PositionIn(BaseModel):
 
 @router.get("/today")
 async def get_today_positions(
-    current_user: TokenData = Depends(require_role("admin")),
+    current_user: TokenData = Depends(require_role("admin", "cashier", "supervisor")),
     db: Session = Depends(get_db),
 ):
     """Return today's opening positions for all active currencies."""
