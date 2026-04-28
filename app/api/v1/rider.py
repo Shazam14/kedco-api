@@ -43,6 +43,7 @@ class DispatchOut(BaseModel):
     status: str
     dispatch_time: Optional[str]
     return_time: Optional[str]
+    cash_php: float
     items: list[ItemOut]
     remit_items: list[ItemOut]
     notes: Optional[str]
@@ -251,6 +252,7 @@ def _dispatch_out(d: RiderDispatch, db: Session) -> DispatchOut:
         status=d.status.value if hasattr(d.status, 'value') else d.status,
         dispatch_time=d.dispatch_time,
         return_time=d.return_time,
+        cash_php=d.cash_php or 0,
         items=[ItemOut(currency=i.currency, amount=i.amount) for i in dispatch_items],
         remit_items=[ItemOut(currency=i.currency, amount=i.amount) for i in remit_items],
         notes=d.notes,
