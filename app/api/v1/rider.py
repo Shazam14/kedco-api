@@ -25,6 +25,7 @@ class CurrencyItem(BaseModel):
 
 class DispatchIn(BaseModel):
     rider_username: str
+    cash_php: float = 0
     items: list[CurrencyItem]
     notes: Optional[str] = None
 
@@ -109,6 +110,7 @@ def dispatch_rider(
         rider_name=rider.full_name or rider.username,
         status=DispatchStatus.IN_FIELD,
         dispatch_time=datetime.now().strftime("%I:%M %p"),
+        cash_php=data.cash_php,
         notes=data.notes,
         dispatched_by=current_user.username,
     )
