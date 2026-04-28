@@ -23,7 +23,7 @@ router = APIRouter(prefix="/credits", tags=["credits"])
 # ── Schemas ──────────────────────────────────────────────────────────────────
 
 class InstallmentIn(BaseModel):
-    due_date: date_type
+    due_date: Optional[date_type] = None
     amount:   float
 
 
@@ -35,13 +35,13 @@ class CreditIn(BaseModel):
     credit_type:    CreditType          # UPFRONT or INSTALLMENT
     disbursed_date: date_type
     notes:          Optional[str] = None
-    installments:   list[InstallmentIn] # always at least 1 (admin builds the list on the front-end)
+    installments:   list[InstallmentIn] = []  # optional — no fixed repayment schedule required
 
 
 class InstallmentOut(BaseModel):
     id:             str
     installment_no: int
-    due_date:       date_type
+    due_date:       Optional[date_type]
     amount:         float
     paid_at:        Optional[date_type]
     received_by:    Optional[str]
@@ -127,9 +127,6 @@ async def create_credit(
     current_user: TokenData = Depends(require_role("admin")),
     db: Session = Depends(get_db),
 ):
-    if not payload.installments:
-        raise HTTPException(status_code=400, detail="At least one installment is required.")
-
     credit = SpecialCredit(
         id=uuid.uuid4(),
         customer_name=payload.customer_name,

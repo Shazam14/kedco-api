@@ -48,3 +48,14 @@ class CashReplenishment(Base):
     note       = Column(String(300), nullable=True)
     added_at   = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     shift      = relationship("TellerShift", back_populates="replenishments")
+
+
+class TreasurerFloat(Base):
+    __tablename__ = "treasurer_floats"
+
+    id                 = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    cashier_username   = Column(String(50), nullable=False, index=True)
+    treasurer_username = Column(String(50), nullable=False)
+    amount_php         = Column(Float, nullable=False)
+    date               = Column(Date, nullable=False, index=True)
+    created_at         = Column(DateTime(timezone=True), server_default=func.now())

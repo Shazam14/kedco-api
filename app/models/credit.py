@@ -79,7 +79,7 @@ class CreditInstallment(Base):
     id             = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     credit_id      = Column(UUID(as_uuid=True), ForeignKey("special_credits.id"), nullable=False, index=True)
     installment_no = Column(Integer, nullable=False)   # 1, 2, 3 …
-    due_date       = Column(Date, nullable=False)       # Ken picks this
+    due_date       = Column(Date, nullable=True)        # optional — repayment date not enforced
     amount         = Column(Float, nullable=False)      # amount expected for this slot
     paid_at        = Column(Date, nullable=True)        # null = not yet paid
     received_by    = Column(String(50), nullable=True)  # admin who recorded the payment
