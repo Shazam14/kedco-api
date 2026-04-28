@@ -71,6 +71,7 @@ class Transaction(Base):
 
 class DispatchStatus(str, enum.Enum):
     IN_FIELD = "IN_FIELD"
+    REMITTED = "REMITTED"
     RETURNED = "RETURNED"
     OFF      = "OFF"
 

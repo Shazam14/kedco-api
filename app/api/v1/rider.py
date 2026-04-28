@@ -45,6 +45,7 @@ class DispatchOut(BaseModel):
     dispatch_time: Optional[str]
     return_time: Optional[str]
     cash_php: float
+    remit_php: Optional[float]
     items: list[ItemOut]
     remit_items: list[ItemOut]
     notes: Optional[str]
@@ -52,6 +53,11 @@ class DispatchOut(BaseModel):
 
     class Config:
         from_attributes = True
+
+class RemitIn(BaseModel):
+    dispatch_id: str
+    cash_php_remaining: float
+    items: list[CurrencyItem]   # forex the rider is returning
 
 class BorrowIn(BaseModel):
     dispatch_id: str
@@ -241,6 +247,41 @@ def my_dispatch(
     return {"dispatch": _dispatch_out(dispatch, db)}
 
 
+# ── Rider remit (end of day) ───────────────────────────────────────────────────
+
+@router.post("/remit", response_model=DispatchOut)
+def submit_remit(
+    data: RemitIn,
+    db: Session = Depends(get_db),
+    current_user: TokenData = Depends(require_role("rider")),
+):
+    dispatch = db.query(RiderDispatch).filter_by(
+        id=data.dispatch_id,
+        rider_username=current_user.username,
+        status=DispatchStatus.IN_FIELD,
+    ).first()
+    if not dispatch:
+        raise HTTPException(404, "Active dispatch not found")
+
+    dispatch.status   = DispatchStatus.REMITTED
+    dispatch.remit_php = data.cash_php_remaining
+    dispatch.return_time = datetime.now().strftime("%I:%M %p")
+
+    # Clear any previous remit items (idempotent)
+    db.query(RiderRemitItem).filter_by(dispatch_id=dispatch.id).delete()
+    for item in data.items:
+        db.add(RiderRemitItem(
+            id=uuid.uuid4(),
+            dispatch_id=dispatch.id,
+            currency=item.currency.upper(),
+            amount=item.amount,
+        ))
+
+    db.commit()
+    db.refresh(dispatch)
+    return _dispatch_out(dispatch, db)
+
+
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 def _dispatch_out(d: RiderDispatch, db: Session) -> DispatchOut:
@@ -255,6 +296,7 @@ def _dispatch_out(d: RiderDispatch, db: Session) -> DispatchOut:
         dispatch_time=d.dispatch_time,
         return_time=d.return_time,
         cash_php=d.cash_php or 0,
+        remit_php=d.remit_php,
         items=[ItemOut(currency=i.currency, amount=i.amount) for i in dispatch_items],
         remit_items=[ItemOut(currency=i.currency, amount=i.amount) for i in remit_items],
         notes=d.notes,
