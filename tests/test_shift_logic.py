@@ -1,34 +1,36 @@
 """
 Unit tests for teller shift business logic.
 
-These tests cover the expected cash calculation formula and edge cases
-without touching the database. The formula:
+Imports the actual production formula from app.services.shifts so the
+test cannot drift away from what the route does at close time.
 
-    expected_closing_cash = opening_cash + Σ(SELL php_amt) - Σ(BUY php_amt)
+Formula (per app.services.shifts.compute_expected_cash):
+    expected = opening + Σ(SELL php_amt) − Σ(BUY php_amt)
+                       − total_commission + total_replenishment
 
 Logic rationale:
-    BUY  → Kedco pays PHP out to customer  → drawer decreases
-    SELL → Kedco receives PHP from customer → drawer increases
+    BUY           → Kedco pays PHP out → drawer decreases
+    SELL          → Kedco receives PHP → drawer increases
+    Commission    → paid out           → drawer decreases
+    Replenishment → cash added         → drawer increases
 """
 
 import pytest
+
+from app.services.shifts import (
+    compute_expected_cash as _compute_expected_cash_prod,
+    compute_variance,
+)
 
 
 def compute_expected_cash(
     opening_cash: float,
     transactions: list[dict],  # list of {type: 'BUY'|'SELL', php_amt: float}
 ) -> float:
-    """
-    Pure Python version of the shift close expected cash formula.
-    Mirrors what shifts.py does when closing a shift.
-    """
+    """Test-only convenience wrapper: derives totals from txns, then calls prod."""
     total_sold   = sum(t["php_amt"] for t in transactions if t["type"] == "SELL")
     total_bought = sum(t["php_amt"] for t in transactions if t["type"] == "BUY")
-    return round(opening_cash + total_sold - total_bought, 2)
-
-
-def compute_variance(closing_cash: float, expected_cash: float) -> float:
-    return round(closing_cash - expected_cash, 2)
+    return _compute_expected_cash_prod(opening_cash, total_sold, total_bought)
 
 
 # ─── Expected Cash Formula ─────────────────────────────────────────────────────

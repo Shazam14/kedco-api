@@ -9,6 +9,7 @@ from app.models.user import User
 from app.schemas.shift import ShiftOpenIn, ShiftCloseIn, ReplenishIn, ShiftOut, ReplenishmentOut
 from app.api.v1.auth import require_role, TokenData
 from app.core.today import get_today
+from app.services.shifts import compute_expected_cash, compute_variance
 
 router = APIRouter(prefix="/shifts", tags=["shifts"])
 
@@ -157,8 +158,11 @@ async def close_shift(
     total_commission = sum(_comm(t) for t in txns if received(t))
     total_replenishment = sum(r.amount_php for r in shift.replenishments)
 
-    expected = round(shift.opening_cash_php + total_sold - total_bought - total_commission + total_replenishment, 2)
-    variance = round(body.closing_cash_php - expected, 2)
+    expected = compute_expected_cash(
+        shift.opening_cash_php,
+        total_sold, total_bought, total_commission, total_replenishment,
+    )
+    variance = compute_variance(body.closing_cash_php, expected)
 
     shift.status            = ShiftStatus.CLOSED
     shift.closed_at         = datetime.now()
