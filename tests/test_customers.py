@@ -372,6 +372,25 @@ class TestAdminCustomerList:
         assert rows[0]["total_volume_php"] == 25_000.0
         assert rows[0]["last_txn_date"] is not None
 
+    def test_top_currencies_returned_per_customer(
+        self, client, admin_user, make_customer, make_transaction, seed_currency_and_rate
+    ):
+        """
+        Regression: chunk-6 mix query referenced Transaction.currency (which
+        doesn't exist — the column is currency_code). The branch only fires
+        when a customer has at least one linked txn, so a list with no
+        linked txns silently passed but prod 500'd.
+        """
+        c = make_customer("Hannah Wu")
+        make_transaction(currency="USD", php_amt=20_000.0, customer_id=c.id)
+        make_transaction(currency="JPY", php_amt=5_000.0,  customer_id=c.id)
+
+        r = client.get("/api/v1/admin/customers", headers=auth_header("admintest", "admin"))
+        assert r.status_code == 200, r.text
+        rows = r.json()
+        assert len(rows) == 1
+        assert rows[0]["top_currencies"] == ["USD", "JPY"]   # ordered by PHP volume desc
+
     def test_pending_txns_excluded_from_volume(
         self, client, admin_user, make_customer, make_transaction, seed_currency_and_rate
     ):

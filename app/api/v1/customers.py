@@ -150,14 +150,14 @@ def admin_list_customers(
         mix_rows = (
             db.query(
                 Transaction.customer_id,
-                Transaction.currency,
+                Transaction.currency_code,
                 func.sum(Transaction.php_amt).label("php_total"),
             )
             .filter(
                 Transaction.customer_id.in_(customer_ids),
                 Transaction.payment_status != PaymentStatus.PENDING,
             )
-            .group_by(Transaction.customer_id, Transaction.currency)
+            .group_by(Transaction.customer_id, Transaction.currency_code)
             .order_by(Transaction.customer_id, func.sum(Transaction.php_amt).desc())
             .all()
         )
