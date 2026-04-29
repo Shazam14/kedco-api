@@ -96,6 +96,16 @@ async def create_transaction(
 
     _validate_customer_id(txn.customer_id, db)
 
+    # Rider sells paid via online channels (GCash, bank transfer, etc.) don't
+    # land in the rider's bag — treasurer/admin confirms collection later via
+    # the existing confirm-payment flow. Force PENDING regardless of what the
+    # client sent so the in-hand totals stay honest.
+    pmode = (txn.payment_mode or "CASH").upper()
+    rider_online_sell = (
+        txn.source == "RIDER" and txn.type == "SELL" and pmode != "CASH"
+    )
+    payment_status = "PENDING" if rider_online_sell else (txn.payment_status or "RECEIVED")
+
     # Generate ID: OR-XXXXXXXX for counter, RD-XXXXXXXX for rider
     prefix = "RD" if txn.source == "RIDER" else "OR"
     txn_id = f"{prefix}-{uuid.uuid4().hex[:8].upper()}"
@@ -120,7 +130,7 @@ async def create_transaction(
         official_rate=official_rate,
         referrer=txn.referrer or None,
         payment_tag=txn.payment_tag or None,
-        payment_status=txn.payment_status or "RECEIVED",
+        payment_status=payment_status,
         reference_date=txn.reference_date,
         note=txn.note or None,
         terminal_id=txn.terminal_id or None,
