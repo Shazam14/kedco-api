@@ -1,0 +1,138 @@
+[
+  {
+    "date": "2026-04-24",
+    "currency_code": "VND",
+    "decimal_places": 4,
+    "old_rate": 0.0025671365441628908,
+    "new_rate": 0.0026,
+    "delta": 3.286345583710911e-05
+  },
+  {
+    "date": "2026-04-24",
+    "currency_code": "QAR",
+    "decimal_places": 2,
+    "old_rate": 14.710465116279071,
+    "new_rate": 14.71,
+    "delta": -0.000465116279070088
+  },
+  {
+    "date": "2026-04-24",
+    "currency_code": "CAD",
+    "decimal_places": 2,
+    "old_rate": 42.00203333333334,
+    "new_rate": 42.0,
+    "delta": -0.002033333333336884
+  },
+  {
+    "date": "2026-04-24",
+    "currency_code": "TWD",
+    "decimal_places": 2,
+    "old_rate": 1.7984284965950759,
+    "new_rate": 1.8,
+    "delta": 0.0015715034049241794
+  },
+  {
+    "date": "2026-04-24",
+    "currency_code": "USD",
+    "decimal_places": 2,
+    "old_rate": 59.36119190481033,
+    "new_rate": 59.36,
+    "delta": -0.0011919048103337104
+  },
+  {
+    "date": "2026-04-24",
+    "currency_code": "AUD",
+    "decimal_places": 2,
+    "old_rate": 42.184870129870134,
+    "new_rate": 42.18,
+    "delta": -0.004870129870134576
+  },
+  {
+    "date": "2026-04-24",
+    "currency_code": "NZD",
+    "decimal_places": 2,
+    "old_rate": 34.21728813559322,
+    "new_rate": 34.22,
+    "delta": 0.0027118644067769537
+  },
+  {
+    "date": "2026-04-24",
+    "currency_code": "AED",
+    "decimal_places": 2,
+    "old_rate": 14.780249307479224,
+    "new_rate": 14.78,
+    "delta": -0.00024930747922446983
+  },
+  {
+    "date": "2026-04-24",
+    "currency_code": "SGD",
+    "decimal_places": 2,
+    "old_rate": 45.64622448979592,
+    "new_rate": 45.65,
+    "delta": 0.003775510204079069
+  },
+  {
+    "date": "2026-04-24",
+    "currency_code": "CHF",
+    "decimal_places": 2,
+    "old_rate": 73.90456790123456,
+    "new_rate": 73.9,
+    "delta": -0.004567901234551641
+  },
+  {
+    "date": "2026-04-24",
+    "currency_code": "SAR",
+    "decimal_places": 2,
+    "old_rate": 14.982788296041308,
+    "new_rate": 14.98,
+    "delta": -0.002788296041307703
+  },
+  {
+    "date": "2026-04-24",
+    "currency_code": "HKD",
+    "decimal_places": 2,
+    "old_rate": 7.267775980590376,
+    "new_rate": 7.27,
+    "delta": 0.0022240194096232457
+  },
+  {
+    "date": "2026-04-24",
+    "currency_code": "THB",
+    "decimal_places": 2,
+    "old_rate": 1.8300000000000003,
+    "new_rate": 1.83,
+    "delta": -2.220446049250313e-16
+  },
+  {
+    "date": "2026-04-24",
+    "currency_code": "GBP",
+    "decimal_places": 2,
+    "old_rate": 79.20224719101124,
+    "new_rate": 79.2,
+    "delta": -0.0022471910112358273
+  },
+  {
+    "date": "2026-04-24",
+    "currency_code": "KRW",
+    "decimal_places": 4,
+    "old_rate": 0.03990452622673434,
+    "new_rate": 0.0399,
+    "delta": -4.52622673434433e-06
+  },
+  {
+    "date": "2026-04-24",
+    "currency_code": "EUR",
+    "decimal_places": 2,
+    "old_rate": 69.4131712473573,
+    "new_rate": 69.41,
+    "delta": -0.0031712473573008992
+  },
+  {
+    "date": "2026-04-24",
+    "currency_code": "JPY",
+    "decimal_places": 4,
+    "old_rate": 0.3724567127746135,
+    "new_rate": 0.3725,
+    "delta": 4.3287225386490213e-05
+  }
+]

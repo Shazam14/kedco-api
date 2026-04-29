@@ -1,5 +1,5 @@
 {
-  "applied_at": "2026-04-29T13:24:30.102575Z",
+  "applied_at": "2026-04-29T14:55:39.974722Z",
   "target_date": "2026-04-23",
   "reason": "Align cashier-typed rates to Ken's Excel rate-board for daily report tally.",
   "entries": [
@@ -8,232 +8,265 @@
       "currency": "USD",
       "foreign_amt": 20.0,
       "cashier": "cashier2",
-      "rate_old": 58.0,
+      "rate_old": 59.0,
       "rate_new": 59.0,
-      "php_amt_old": 1160.0,
+      "php_amt_old": 1180.0,
       "php_amt_new": 1180.0,
-      "delta_php": 20.0
+      "delta_php": 0.0
     },
     {
       "id": "OR-01E09D4A",
       "currency": "USD",
       "foreign_amt": 50.0,
       "cashier": "cashier2",
-      "rate_old": 57.0,
+      "rate_old": 58.0,
       "rate_new": 58.0,
-      "php_amt_old": 2850.0,
+      "php_amt_old": 2900.0,
       "php_amt_new": 2900.0,
-      "delta_php": 50.0
+      "delta_php": 0.0
     },
     {
       "id": "OR-D549C124",
       "currency": "USD",
       "foreign_amt": 100.0,
       "cashier": "cashier1",
-      "rate_old": 58.0,
+      "rate_old": 59.0,
       "rate_new": 59.0,
-      "php_amt_old": 5800.0,
+      "php_amt_old": 5900.0,
       "php_amt_new": 5900.0,
-      "delta_php": 100.0
+      "delta_php": 0.0
     },
     {
       "id": "OR-5A6C7983",
       "currency": "USD",
       "foreign_amt": 250.0,
       "cashier": "cashier1",
-      "rate_old": 58.0,
+      "rate_old": 59.0,
       "rate_new": 59.0,
-      "php_amt_old": 14500.0,
+      "php_amt_old": 14750.0,
       "php_amt_new": 14750.0,
-      "delta_php": 250.0
+      "delta_php": 0.0
     },
     {
       "id": "OR-AA495B08",
       "currency": "USD",
       "foreign_amt": 300.0,
       "cashier": "cashier2",
-      "rate_old": 58.0,
+      "rate_old": 59.0,
       "rate_new": 59.0,
-      "php_amt_old": 17400.0,
+      "php_amt_old": 17700.0,
       "php_amt_new": 17700.0,
-      "delta_php": 300.0
+      "delta_php": 0.0
     },
     {
       "id": "OR-8B446F80",
       "currency": "USD",
       "foreign_amt": 400.0,
       "cashier": "cashier2",
-      "rate_old": 58.0,
+      "rate_old": 59.0,
       "rate_new": 59.0,
-      "php_amt_old": 23200.0,
+      "php_amt_old": 23600.0,
       "php_amt_new": 23600.0,
-      "delta_php": 400.0
+      "delta_php": 0.0
     },
     {
       "id": "OR-4FC8A92A",
       "currency": "USD",
       "foreign_amt": 500.0,
       "cashier": "cashier1",
-      "rate_old": 58.0,
+      "rate_old": 59.0,
       "rate_new": 59.0,
-      "php_amt_old": 29000.0,
+      "php_amt_old": 29500.0,
       "php_amt_new": 29500.0,
-      "delta_php": 500.0
+      "delta_php": 0.0
     },
     {
       "id": "OR-F6B05B24",
       "currency": "USD",
       "foreign_amt": 800.0,
       "cashier": "cashier1",
-      "rate_old": 58.0,
+      "rate_old": 59.0,
       "rate_new": 59.0,
-      "php_amt_old": 46400.0,
+      "php_amt_old": 47200.0,
       "php_amt_new": 47200.0,
-      "delta_php": 800.0
+      "delta_php": 0.0
     },
     {
       "id": "OR-6FD04694",
       "currency": "USD",
       "foreign_amt": 800.0,
       "cashier": "cashier2",
-      "rate_old": 58.0,
+      "rate_old": 59.0,
       "rate_new": 59.0,
-      "php_amt_old": 46400.0,
+      "php_amt_old": 47200.0,
       "php_amt_new": 47200.0,
-      "delta_php": 800.0
+      "delta_php": 0.0
     },
     {
       "id": "OR-E179EABB",
       "currency": "USD",
       "foreign_amt": 1000.0,
       "cashier": "cashier1",
-      "rate_old": 58.0,
+      "rate_old": 59.0,
       "rate_new": 59.0,
-      "php_amt_old": 58000.0,
+      "php_amt_old": 59000.0,
       "php_amt_new": 59000.0,
-      "delta_php": 1000.0
+      "delta_php": 0.0
     },
     {
       "id": "OR-CDDB1758",
       "currency": "USD",
       "foreign_amt": 1000.0,
       "cashier": "cashier2",
-      "rate_old": 58.0,
+      "rate_old": 59.0,
       "rate_new": 59.0,
-      "php_amt_old": 58000.0,
+      "php_amt_old": 59000.0,
       "php_amt_new": 59000.0,
-      "delta_php": 1000.0
+      "delta_php": 0.0
     },
     {
       "id": "OR-F79072B5",
       "currency": "USD",
       "foreign_amt": 1270.0,
       "cashier": "cashier2",
-      "rate_old": 58.0,
+      "rate_old": 59.0,
       "rate_new": 59.0,
-      "php_amt_old": 73660.0,
+      "php_amt_old": 74930.0,
       "php_amt_new": 74930.0,
-      "delta_php": 1270.0
+      "delta_php": 0.0
     },
     {
       "id": "OR-7DE346A8",
       "currency": "USD",
       "foreign_amt": 1400.0,
       "cashier": "cashier2",
-      "rate_old": 58.0,
+      "rate_old": 59.0,
       "rate_new": 59.0,
-      "php_amt_old": 81200.0,
+      "php_amt_old": 82600.0,
       "php_amt_new": 82600.0,
-      "delta_php": 1400.0
+      "delta_php": 0.0
     },
     {
       "id": "OR-7F11A707",
       "currency": "USD",
       "foreign_amt": 2500.0,
       "cashier": "cashier2",
-      "rate_old": 58.0,
+      "rate_old": 59.0,
       "rate_new": 59.0,
-      "php_amt_old": 145000.0,
+      "php_amt_old": 147500.0,
       "php_amt_new": 147500.0,
-      "delta_php": 2500.0
+      "delta_php": 0.0
     },
     {
       "id": "OR-A5E0C8A6",
       "currency": "JPY",
       "foreign_amt": 15000.0,
       "cashier": "cashier2",
-      "rate_old": 0.36,
+      "rate_old": 0.372,
       "rate_new": 0.372,
-      "php_amt_old": 5400.0,
+      "php_amt_old": 5580.0,
       "php_amt_new": 5580.0,
-      "delta_php": 180.0
+      "delta_php": 0.0
     },
     {
       "id": "OR-C16833F3",
       "currency": "JPY",
       "foreign_amt": 40000.0,
       "cashier": "cashier1",
-      "rate_old": 0.36,
+      "rate_old": 0.37,
       "rate_new": 0.37,
-      "php_amt_old": 14400.0,
+      "php_amt_old": 14800.0,
       "php_amt_new": 14800.0,
-      "delta_php": 400.0
+      "delta_php": 0.0
     },
     {
       "id": "OR-0B898A5E",
       "currency": "JPY",
       "foreign_amt": 50000.0,
       "cashier": "cashier2",
-      "rate_old": 0.36,
+      "rate_old": 0.372,
       "rate_new": 0.372,
-      "php_amt_old": 18000.0,
+      "php_amt_old": 18600.0,
       "php_amt_new": 18600.0,
-      "delta_php": 600.0
+      "delta_php": 0.0
     },
     {
       "id": "OR-ADE35746",
       "currency": "JPY",
       "foreign_amt": 120000.0,
       "cashier": "cashier1",
-      "rate_old": 0.36,
+      "rate_old": 0.37,
       "rate_new": 0.37,
-      "php_amt_old": 43200.0,
+      "php_amt_old": 44400.0,
       "php_amt_new": 44400.0,
-      "delta_php": 1200.0
+      "delta_php": 0.0
     },
     {
       "id": "OR-B07D9D0E",
       "currency": "JPY",
       "foreign_amt": 150000.0,
       "cashier": "cashier1",
-      "rate_old": 0.36,
+      "rate_old": 0.37,
       "rate_new": 0.37,
-      "php_amt_old": 54000.0,
+      "php_amt_old": 55500.0,
       "php_amt_new": 55500.0,
-      "delta_php": 1500.0
+      "delta_php": 0.0
     },
     {
       "id": "OR-E28339D9",
       "currency": "JPY",
       "foreign_amt": 310000.0,
       "cashier": "cashier1",
-      "rate_old": 0.35,
+      "rate_old": 0.37,
       "rate_new": 0.37,
-      "php_amt_old": 108500.0,
+      "php_amt_old": 114700.0,
       "php_amt_new": 114700.0,
-      "delta_php": 6200.0
+      "delta_php": 0.0
     },
     {
       "id": "OR-AAEC03E8",
       "currency": "VND",
       "foreign_amt": 3818000.0,
       "cashier": "cashier1",
-      "rate_old": 0.0018,
+      "rate_old": 0.002,
       "rate_new": 0.002,
-      "php_amt_old": 6872.4,
+      "php_amt_old": 7636.0,
       "php_amt_new": 7636.0,
-      "delta_php": 763.6
+      "delta_php": 0.0
+    },
+    {
+      "id": "OR-16F673E8",
+      "currency": "CAD",
+      "foreign_amt": 500.0,
+      "cashier": "cashier1",
+      "rate_old": 40.0,
+      "rate_new": 41.0,
+      "php_amt_old": 20000.0,
+      "php_amt_new": 20500.0,
+      "delta_php": 500.0
+    },
+    {
+      "id": "OR-5183FA1C",
+      "currency": "SGD",
+      "foreign_amt": 50.0,
+      "cashier": "cashier1",
+      "rate_old": 44.0,
+      "rate_new": 45.0,
+      "php_amt_old": 2200.0,
+      "php_amt_new": 2250.0,
+      "delta_php": 50.0
+    },
+    {
+      "id": "OR-054D80CD",
+      "currency": "HKD",
+      "foreign_amt": 13000.0,
+      "cashier": "cashier2",
+      "rate_old": 7.0,
+      "rate_new": 7.2,
+      "php_amt_old": 91000.0,
+      "php_amt_new": 93600.0,
+      "delta_php": 2600.0
     }
   ],
-  "total_delta_php": 21233.6
+  "total_delta_php": 3150.0
 }

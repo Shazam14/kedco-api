@@ -4,7 +4,7 @@ from sqlalchemy import func
 from datetime import timedelta, date
 
 from app.core.database import get_db
-from app.models.currency import DailyRate, DailyPosition
+from app.models.currency import Currency, DailyRate, DailyPosition
 from app.models.transaction import Transaction, DailySummary, PaymentStatus
 from app.models.user import User
 from app.services.forex import compute_position, CarryIn, TodayBuy
@@ -67,6 +67,7 @@ async def close_day(
             sold_by_currency.setdefault(t.currency_code, []).append(t)
 
     # ── 4. Compute carry-forward for each currency ────────────────────
+    currency_dp = {c.code: c.decimal_places for c in db.query(Currency).all()}
     carry_forward = []
     total_stock_value = 0.0
     total_unrealized  = 0.0
@@ -87,10 +88,15 @@ async def close_day(
         total_stock_value += max(remaining_qty, 0) * rate_row.sell_rate
         total_unrealized  += result.unrealized_php
 
+        # Round daily_avg_cost to currency.decimal_places before stamping —
+        # matches Excel methodology and keeps THAN/closing rates aligned.
+        # See feedback_than_excel_rounding.md.
+        rounded_avg = round(result.daily_avg_cost, currency_dp.get(code, 4))
+
         carry_forward.append({
             "currency_code":  code,
             "carry_in_qty":   max(remaining_qty, 0),
-            "carry_in_rate":  result.daily_avg_cost,  # tomorrow's cost basis = today's closing avg rate (confirmed by Ken 2026-04-13)
+            "carry_in_rate":  rounded_avg,
         })
 
     # ── 5. Write tomorrow's positions (upsert) ────────────────────────

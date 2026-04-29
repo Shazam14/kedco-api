@@ -56,6 +56,11 @@ CORRECTIONS: list[tuple[str, float]] = [
     ("OR-E28339D9", 0.37),    # 310000 JPY: 0.35 → 0.37
     # VND — 1 row
     ("OR-AAEC03E8", 0.002),   # 3,818,000 VND: 0.0018 → 0.002
+    # CAD/HKD/SGD — 3 rows added 2026-04-29 after STOCKSLEFT reconciliation
+    # showed Apr 24 carry_in_rates didn't match Excel (₱3,032 gap from these BUYs).
+    ("OR-16F673E8", 41.0),    # 500 CAD: 40 → 41 (cashier1, 02:31 AM)
+    ("OR-5183FA1C", 45.0),    # 50 SGD: 44 → 45 (cashier1, 02:32 AM)
+    ("OR-054D80CD", 7.2),     # 13000 HKD: 7 → 7.2 (cashier2, 03:04 AM)
 ]
 
 AUDIT_PATH = Path(__file__).resolve().parent / "audit" / "apr23_rate_corrections.json"
