@@ -579,3 +579,124 @@ class TestAdminMergeCustomers:
             json={"duplicate_ids": [str(b.id)]},
         )
         assert r.status_code == 403
+
+
+# ── Per-customer detail (chunk 4) ────────────────────────────────────────────
+
+class TestAdminCustomerDetail:
+    """
+    GET /api/v1/admin/customers/{id}/detail
+
+    Powers /admin/customers/{id} — the per-customer payoff page.
+    Returns aggregates + currency mix + weekly/annual rollups + recent txns.
+    """
+
+    def test_404_when_unknown(self, client, admin_user):
+        r = client.get(
+            f"/api/v1/admin/customers/{uuid.uuid4()}/detail",
+            headers=auth_header("admintest", "admin"),
+        )
+        assert r.status_code == 404
+
+    def test_zero_aggregates_when_customer_has_no_txns(
+        self, client, admin_user, make_customer
+    ):
+        c = make_customer("Brand New", phone="09171111111")
+        r = client.get(
+            f"/api/v1/admin/customers/{c.id}/detail",
+            headers=auth_header("admintest", "admin"),
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert body["customer"]["name"] == "Brand New"
+        assert body["customer"]["phone"] == "09171111111"
+        assert body["stats"]["txn_count"] == 0
+        assert body["stats"]["total_volume_php"] == 0.0
+        assert body["stats"]["last_txn_date"] is None
+        assert body["stats"]["first_txn_date"] is None
+        assert body["currency_mix"] == []
+        assert body["weekly"] == []
+        assert body["annual"] == []
+        assert body["recent_transactions"] == []
+
+    def test_full_aggregates_populated(
+        self, client, admin_user, make_customer, make_transaction, seed_currency_and_rate, db
+    ):
+        c = make_customer("Hannah Wu")
+        # Two USD txns + one EUR txn, plus a PENDING that must NOT count
+        from app.models.currency import Currency, CurrencyCategory
+        db.add(Currency(
+            code="EUR", name="Euro", flag="🇪🇺",
+            category=CurrencyCategory.MAIN, decimal_places=2, sort_order=2, is_active="Y",
+        ))
+        db.commit()
+        make_transaction(currency="USD", foreign_amt=100, php_amt=10_000.0, customer_id=c.id)
+        make_transaction(currency="USD", foreign_amt=200, php_amt=20_000.0, customer_id=c.id)
+        make_transaction(currency="EUR", foreign_amt=50,  php_amt=4_000.0,  customer_id=c.id)
+        make_transaction(currency="USD", foreign_amt=99,  php_amt=99_999.0, customer_id=c.id, payment_status="PENDING")
+
+        body = client.get(
+            f"/api/v1/admin/customers/{c.id}/detail",
+            headers=auth_header("admintest", "admin"),
+        ).json()
+
+        # Aggregates exclude PENDING
+        assert body["stats"]["txn_count"] == 3
+        assert body["stats"]["total_volume_php"] == 34_000.0
+        assert body["stats"]["last_txn_date"] is not None
+        assert body["stats"]["first_txn_date"] is not None
+
+        # Currency mix sorted by total_php desc — USD (30K) before EUR (4K)
+        mix = body["currency_mix"]
+        assert [m["currency"] for m in mix] == ["USD", "EUR"]
+        usd = next(m for m in mix if m["currency"] == "USD")
+        assert usd["txn_count"] == 2
+        assert usd["total_foreign"] == 300
+        assert usd["total_php"] == 30_000.0
+
+        # Recent transactions: 3 RECEIVED rows
+        assert len(body["recent_transactions"]) == 3
+        for t in body["recent_transactions"]:
+            assert t["payment_status"] == "RECEIVED"
+
+        # Weekly + annual buckets each have at least one row (today's bucket)
+        assert len(body["weekly"]) >= 1
+        assert len(body["annual"]) >= 1
+
+    def test_includes_txns_repointed_via_merge(
+        self, client, admin_user, make_customer, make_transaction, seed_currency_and_rate
+    ):
+        """After merging, the canonical's detail page should include the dupe's old txns."""
+        canonical = make_customer("Hannah Wu")
+        dupe      = make_customer("Hanna Wuu")
+        make_transaction(php_amt=10_000.0, customer_id=canonical.id)
+        make_transaction(php_amt=5_000.0,  customer_id=dupe.id)
+
+        client.post(
+            f"/api/v1/admin/customers/{canonical.id}/merge",
+            headers=auth_header("admintest", "admin"),
+            json={"duplicate_ids": [str(dupe.id)]},
+        )
+
+        body = client.get(
+            f"/api/v1/admin/customers/{canonical.id}/detail",
+            headers=auth_header("admintest", "admin"),
+        ).json()
+        assert body["stats"]["txn_count"] == 2
+        assert body["stats"]["total_volume_php"] == 15_000.0
+
+    def test_supervisor_can_access(self, client, supervisor_user, make_customer):
+        c = make_customer("Hannah Wu")
+        r = client.get(
+            f"/api/v1/admin/customers/{c.id}/detail",
+            headers=auth_header("supervisortest", "supervisor"),
+        )
+        assert r.status_code == 200
+
+    def test_cashier_blocked(self, client, cashier_user, make_customer):
+        c = make_customer("Hannah Wu")
+        r = client.get(
+            f"/api/v1/admin/customers/{c.id}/detail",
+            headers=auth_header("cashiertest", "cashier"),
+        )
+        assert r.status_code == 403

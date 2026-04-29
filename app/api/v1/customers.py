@@ -218,3 +218,167 @@ def merge_customers(
         merged_count=len(dupes),
         transactions_repointed=int(repointed),
     )
+
+
+# ── Admin per-customer detail (chunk 4 — the "payoff" view) ─────────────────
+
+class StatsOut(BaseModel):
+    txn_count: int
+    total_volume_php: float
+    last_txn_date: Optional[date] = None
+    first_txn_date: Optional[date] = None
+
+
+class CurrencyMixRow(BaseModel):
+    currency: str
+    txn_count: int
+    total_foreign: float
+    total_php: float
+
+
+class PeriodRow(BaseModel):
+    period: date            # week_start or year_start
+    txn_count: int
+    total_php: float
+
+
+class RecentTxnOut(BaseModel):
+    id: str
+    date: date
+    time: str
+    type: str
+    source: str
+    currency: str
+    foreign_amt: float
+    rate: float
+    php_amt: float
+    than: float
+    cashier: str
+    payment_status: str
+
+
+class CustomerDetailOut(BaseModel):
+    customer: CustomerOut
+    stats: StatsOut
+    currency_mix: list[CurrencyMixRow]
+    weekly: list[PeriodRow]
+    annual: list[PeriodRow]
+    recent_transactions: list[RecentTxnOut]
+
+
+@admin_router.get("/{customer_id}/detail", response_model=CustomerDetailOut)
+def admin_customer_detail(
+    customer_id: UUID,
+    _user: TokenData = Depends(require_role("admin", "supervisor")),
+    db: Session = Depends(get_db),
+):
+    """
+    Per-customer rollup powering /admin/customers/{id}.
+
+    Aggregates all RECEIVED transactions linked to this customer_id —
+    including transactions that originated under a now-merged dupe id,
+    since merge repoints customer_id to the canonical row.
+
+    Buckets:
+      • currency_mix — one row per currency the customer has touched
+      • weekly       — last 12 ISO weeks (Monday-anchored), volume per week
+      • annual       — last 5 years, volume per year
+      • recent_transactions — last 50 RECEIVED txns
+    """
+    customer = db.query(Customer).filter_by(id=customer_id).first()
+    if not customer:
+        raise HTTPException(404, "Customer not found")
+
+    base = db.query(Transaction).filter(
+        Transaction.customer_id == customer_id,
+        Transaction.payment_status != PaymentStatus.PENDING,
+    )
+
+    txn_count = base.count()
+    total_volume = float(base.with_entities(func.coalesce(func.sum(Transaction.php_amt), 0.0)).scalar() or 0.0)
+    last_dt  = base.with_entities(func.max(Transaction.date)).scalar()
+    first_dt = base.with_entities(func.min(Transaction.date)).scalar()
+
+    currency_rows = (
+        base.with_entities(
+            Transaction.currency_code.label("currency"),
+            func.count(Transaction.id).label("txn_count"),
+            func.coalesce(func.sum(Transaction.foreign_amt), 0.0).label("total_foreign"),
+            func.coalesce(func.sum(Transaction.php_amt), 0.0).label("total_php"),
+        )
+        .group_by(Transaction.currency_code)
+        .order_by(func.coalesce(func.sum(Transaction.php_amt), 0.0).desc())
+        .all()
+    )
+
+    # Reuse the same expression object across SELECT/GROUP BY/ORDER BY so
+    # Postgres treats them as identical (parameterized truncation arg
+    # otherwise breaks the GROUP BY identity check).
+    week_bucket = func.date_trunc("week", Transaction.date)
+    weekly_rows = (
+        base.with_entities(
+            week_bucket.label("period"),
+            func.count(Transaction.id).label("txn_count"),
+            func.coalesce(func.sum(Transaction.php_amt), 0.0).label("total_php"),
+        )
+        .group_by(week_bucket)
+        .order_by(week_bucket.desc())
+        .limit(12).all()
+    )
+
+    year_bucket = func.date_trunc("year", Transaction.date)
+    annual_rows = (
+        base.with_entities(
+            year_bucket.label("period"),
+            func.count(Transaction.id).label("txn_count"),
+            func.coalesce(func.sum(Transaction.php_amt), 0.0).label("total_php"),
+        )
+        .group_by(year_bucket)
+        .order_by(year_bucket.desc())
+        .limit(5).all()
+    )
+
+    recent_rows = (
+        base.order_by(Transaction.date.desc(), Transaction.created_at.desc())
+        .limit(50)
+        .all()
+    )
+
+    return CustomerDetailOut(
+        customer=CustomerOut(
+            id=customer.id, name=customer.name, phone=customer.phone, notes=customer.notes,
+            is_active=customer.is_active, created_by=customer.created_by, created_at=customer.created_at,
+        ),
+        stats=StatsOut(
+            txn_count=txn_count, total_volume_php=total_volume,
+            last_txn_date=last_dt, first_txn_date=first_dt,
+        ),
+        currency_mix=[
+            CurrencyMixRow(
+                currency=r.currency, txn_count=int(r.txn_count),
+                total_foreign=float(r.total_foreign or 0), total_php=float(r.total_php or 0),
+            ) for r in currency_rows
+        ],
+        weekly=[
+            PeriodRow(
+                period=r.period.date() if hasattr(r.period, "date") else r.period,
+                txn_count=int(r.txn_count), total_php=float(r.total_php or 0),
+            ) for r in weekly_rows
+        ],
+        annual=[
+            PeriodRow(
+                period=r.period.date() if hasattr(r.period, "date") else r.period,
+                txn_count=int(r.txn_count), total_php=float(r.total_php or 0),
+            ) for r in annual_rows
+        ],
+        recent_transactions=[
+            RecentTxnOut(
+                id=t.id, date=t.date, time=t.time,
+                type=t.type.value if hasattr(t.type, "value") else str(t.type),
+                source=t.source.value if hasattr(t.source, "value") else str(t.source),
+                currency=t.currency_code, foreign_amt=t.foreign_amt, rate=t.rate,
+                php_amt=t.php_amt, than=t.than, cashier=t.cashier,
+                payment_status=t.payment_status.value if hasattr(t.payment_status, "value") else str(t.payment_status),
+            ) for t in recent_rows
+        ],
+    )
