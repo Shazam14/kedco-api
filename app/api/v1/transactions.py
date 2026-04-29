@@ -9,11 +9,28 @@ from app.core.today import get_today
 from app.models.transaction import Transaction
 from app.models.audit import AuditLog
 from app.models.currency import DailyRate, DailyPosition
+from app.models.customer import Customer
 from app.schemas.forex import TransactionIn, TransactionOut, TransactionPatch, TransactionBatchIn
 from app.services.forex import compute_position, CarryIn, TodayBuy
 from app.api.v1.auth import require_role, TokenData
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
+
+
+def _validate_customer_id(customer_id, db: Session) -> None:
+    """Reject customer_id values that don't resolve to an active, non-merged customer."""
+    if customer_id is None:
+        return
+    exists = db.query(Customer).filter(
+        Customer.id == customer_id,
+        Customer.is_active.is_(True),
+        Customer.merged_into_id.is_(None),
+    ).first()
+    if not exists:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"customer_id {customer_id} not found or inactive",
+        )
 
 
 def _get_daily_avg(currency_code: str, today, db: Session) -> float:
@@ -75,6 +92,8 @@ async def create_transaction(
 
     official_rate = txn.official_rate if not is_excess else None
 
+    _validate_customer_id(txn.customer_id, db)
+
     # Generate ID: OR-XXXXXXXX for counter, RD-XXXXXXXX for rider
     prefix = "RD" if txn.source == "RIDER" else "OR"
     txn_id = f"{prefix}-{uuid.uuid4().hex[:8].upper()}"
@@ -93,6 +112,7 @@ async def create_transaction(
         than=than,
         cashier=current_user.username,
         customer=txn.customer,
+        customer_id=txn.customer_id,
         payment_mode=txn.payment_mode or "CASH",
         bank_id=txn.bank_id,
         official_rate=official_rate,
@@ -120,6 +140,7 @@ async def create_transaction(
         than=record.than,
         cashier=record.cashier,
         customer=record.customer,
+        customer_id=record.customer_id,
         payment_mode=record.payment_mode,
         bank_id=record.bank_id,
         official_rate=record.official_rate,
@@ -142,6 +163,8 @@ async def create_batch_transaction(
     now = datetime.now().strftime("%I:%M %p")
     batch_uuid = uuid.uuid4()
 
+    _validate_customer_id(batch.customer_id, db)
+
     records = []
     for item in batch.items:
         daily_avg = _get_daily_avg(item.currency, today, db)
@@ -155,6 +178,7 @@ async def create_batch_transaction(
             rate=item.rate, php_amt=php_amt,
             daily_avg_cost=daily_avg, than=than,
             cashier=current_user.username, customer=batch.customer,
+            customer_id=batch.customer_id,
             payment_mode=batch.payment_mode or "CASH",
             bank_id=batch.bank_id,
             official_rate=item.official_rate,
@@ -174,7 +198,7 @@ async def create_batch_transaction(
         id=r.id, time=r.time, type=r.type, source=r.source,
         currency=r.currency_code, foreign_amt=r.foreign_amt,
         rate=r.rate, php_amt=r.php_amt, than=r.than,
-        cashier=r.cashier, customer=r.customer,
+        cashier=r.cashier, customer=r.customer, customer_id=r.customer_id,
         payment_mode=r.payment_mode, bank_id=r.bank_id,
         official_rate=r.official_rate, referrer=r.referrer,
         batch_id=r.batch_id,
@@ -204,7 +228,7 @@ async def get_today_transactions(
             id=r.id, time=r.time, type=r.type, source=r.source,
             currency=r.currency_code, foreign_amt=r.foreign_amt,
             rate=r.rate, php_amt=r.php_amt, than=r.than,
-            cashier=r.cashier, customer=r.customer,
+            cashier=r.cashier, customer=r.customer, customer_id=r.customer_id,
             payment_mode=r.payment_mode, bank_id=r.bank_id,
             official_rate=r.official_rate, referrer=r.referrer,
             payment_tag=r.payment_tag, payment_status=r.payment_status,
@@ -245,6 +269,9 @@ async def edit_transaction(
         record.type = patch.type
     if patch.customer is not None:
         record.customer = patch.customer or None
+    if patch.customer_id is not None:
+        _validate_customer_id(patch.customer_id, db)
+        record.customer_id = patch.customer_id
     if patch.payment_mode is not None:
         record.payment_mode = patch.payment_mode
     if patch.bank_id is not None:
@@ -298,7 +325,7 @@ async def edit_transaction(
         id=record.id, time=record.time, type=record.type, source=record.source,
         currency=record.currency_code, foreign_amt=record.foreign_amt,
         rate=record.rate, php_amt=record.php_amt, than=record.than,
-        cashier=record.cashier, customer=record.customer,
+        cashier=record.cashier, customer=record.customer, customer_id=record.customer_id,
         payment_mode=record.payment_mode, bank_id=record.bank_id,
         official_rate=record.official_rate, referrer=record.referrer,
         payment_tag=record.payment_tag, payment_status=record.payment_status,
@@ -324,7 +351,7 @@ async def get_commissions(
             id=r.id, time=r.time, type=r.type, source=r.source,
             currency=r.currency_code, foreign_amt=r.foreign_amt,
             rate=r.rate, php_amt=r.php_amt, than=r.than,
-            cashier=r.cashier, customer=r.customer,
+            cashier=r.cashier, customer=r.customer, customer_id=r.customer_id,
             payment_mode=r.payment_mode,
             official_rate=r.official_rate, referrer=r.referrer,
             date=r.date,

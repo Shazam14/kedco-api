@@ -20,6 +20,7 @@ class TransactionIn(BaseModel):
     rate: float                           # 0.0 for EXCESS entries
     cashier: str
     customer: Optional[str] = None
+    customer_id: Optional[UUID] = None
     payment_mode: Optional[str] = "CASH"
     bank_id: Optional[int] = None
     official_rate: Optional[float] = None
@@ -44,6 +45,7 @@ class TransactionOut(BaseModel):
     than: float
     cashier: str
     customer: Optional[str] = None
+    customer_id: Optional[UUID] = None
     payment_mode: str = "CASH"
     bank_id: Optional[int] = None
     official_rate: Optional[float] = None
@@ -68,6 +70,7 @@ class TransactionBatchIn(BaseModel):
     type: Literal["BUY", "SELL"]
     source: Literal["COUNTER", "RIDER"] = "COUNTER"
     customer: Optional[str] = None
+    customer_id: Optional[UUID] = None
     payment_mode: Optional[str] = "CASH"
     bank_id: Optional[int] = None
     referrer: Optional[str] = None
@@ -94,6 +97,7 @@ class CurrencyPositionOut(BaseModel):
 class TransactionPatch(BaseModel):
     type:           Optional[Literal["BUY", "SELL"]] = None
     customer:       Optional[str]   = None
+    customer_id:    Optional[UUID]  = None
     payment_mode:   Optional[str]   = None
     bank_id:        Optional[int]   = None
     rate:           Optional[float] = None
