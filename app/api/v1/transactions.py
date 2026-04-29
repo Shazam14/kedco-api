@@ -2,6 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
 from datetime import datetime, date
 from typing import Optional
+from uuid import UUID
+from pydantic import BaseModel
 import uuid
 
 from app.core.database import get_db
@@ -330,6 +332,55 @@ async def edit_transaction(
         official_rate=record.official_rate, referrer=record.referrer,
         payment_tag=record.payment_tag, payment_status=record.payment_status,
         reference_date=record.reference_date,
+    )
+
+
+class CustomerLinkIn(BaseModel):
+    customer_id: Optional[UUID] = None
+
+
+@router.post("/{txn_id}/customer", response_model=TransactionOut)
+async def link_customer_to_transaction(
+    txn_id: str,
+    body: CustomerLinkIn,
+    current_user: TokenData = Depends(require_role("rider", "cashier", "admin", "supervisor")),
+    db: Session = Depends(get_db),
+):
+    """
+    Lightweight customer-association endpoint — lets the txn owner attach
+    or change a customer on their own same-day txn without going through
+    the full admin PATCH flow. Pass customer_id=null to detach.
+
+    Why a separate endpoint: PATCH /{id} is admin-gated and audited because
+    it can change rates/amounts. Linking a customer doesn't move money;
+    it just labels the txn for aggregation. Rider/cashier need to do this
+    inline when a walk-in turns out to be a known loyal customer.
+    """
+    record = db.query(Transaction).filter_by(id=txn_id).first()
+    if not record:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    if record.date != get_today():
+        raise HTTPException(status_code=403, detail="Only same-day transactions can be linked")
+    # Owner check — admin/supervisor can relink anyone's; rider/cashier only their own.
+    if current_user.role in ("rider", "cashier") and record.cashier != current_user.username:
+        raise HTTPException(status_code=403, detail="Cannot link customer on another user's transaction")
+
+    if body.customer_id is not None:
+        _validate_customer_id(body.customer_id, db)
+    record.customer_id = body.customer_id
+    db.commit()
+    db.refresh(record)
+
+    return TransactionOut(
+        id=record.id, time=record.time, type=record.type, source=record.source,
+        currency=record.currency_code, foreign_amt=record.foreign_amt,
+        rate=record.rate, php_amt=record.php_amt, than=record.than,
+        cashier=record.cashier, customer=record.customer, customer_id=record.customer_id,
+        payment_mode=record.payment_mode, bank_id=record.bank_id,
+        official_rate=record.official_rate, referrer=record.referrer,
+        payment_tag=record.payment_tag, payment_status=record.payment_status,
+        reference_date=record.reference_date,
+        terminal_id=record.terminal_id, branch_id=record.branch_id,
     )
 
 

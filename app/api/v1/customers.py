@@ -97,6 +97,7 @@ class CustomerWithStatsOut(BaseModel):
     txn_count: int
     total_volume_php: float
     last_txn_date: Optional[date] = None
+    top_currencies: list[str] = Field(default_factory=list)
 
 
 admin_router = APIRouter(prefix="/admin/customers", tags=["customers-admin"])
@@ -142,6 +143,28 @@ def admin_list_customers(
         Customer.name,
     ).limit(limit).all()
 
+    # Per-customer currency breakdown — top 2 by PHP volume per row.
+    customer_ids = [c.id for c, *_ in rows]
+    top_by_customer: dict[UUID, list[str]] = {cid: [] for cid in customer_ids}
+    if customer_ids:
+        mix_rows = (
+            db.query(
+                Transaction.customer_id,
+                Transaction.currency,
+                func.sum(Transaction.php_amt).label("php_total"),
+            )
+            .filter(
+                Transaction.customer_id.in_(customer_ids),
+                Transaction.payment_status != PaymentStatus.PENDING,
+            )
+            .group_by(Transaction.customer_id, Transaction.currency)
+            .order_by(Transaction.customer_id, func.sum(Transaction.php_amt).desc())
+            .all()
+        )
+        for cid, ccy, _php in mix_rows:
+            if len(top_by_customer[cid]) < 2:
+                top_by_customer[cid].append(ccy)
+
     return [
         CustomerWithStatsOut(
             id=c.id, name=c.name, phone=c.phone, notes=c.notes,
@@ -149,6 +172,7 @@ def admin_list_customers(
             txn_count=int(txn_count or 0),
             total_volume_php=float(total_volume_php or 0),
             last_txn_date=last_txn_date,
+            top_currencies=top_by_customer.get(c.id, []),
         )
         for c, txn_count, total_volume_php, last_txn_date in rows
     ]
