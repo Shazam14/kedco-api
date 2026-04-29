@@ -249,6 +249,7 @@ async def get_daily_report(
                 "than":        t.than,
                 "cashier":     t.cashier,
                 "customer":    t.customer or "",
+                "payment_status": t.payment_status.value if hasattr(t.payment_status, 'value') else (t.payment_status or "RECEIVED"),
             }
             for t in txns
         ],
