@@ -68,6 +68,30 @@ class AppSetting(Base):
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 
 
+class CreditLedgerEntry(Base):
+    """
+    One row of Apple-style revolving-credit ledger:
+      PALOD = disbursement (money out)
+      THAN  = interest earned upfront
+      BAYAD = repayment (money in)
+      balance = running outstanding after this row
+    Mirrors how Ken keeps it in Apple 2026.xlsx.
+    """
+    __tablename__ = "credit_ledger_entries"
+
+    id          = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    credit_id   = Column(UUID(as_uuid=True), ForeignKey("special_credits.id"), nullable=False, index=True)
+    date        = Column(Date, nullable=False, index=True)
+    time        = Column(String(20),  nullable=True)   # free-form: "10:41AM", "4:24PM", etc.
+    description = Column(String(300), nullable=True)
+    palod       = Column(Float, nullable=False, default=0)
+    than        = Column(Float, nullable=False, default=0)
+    bayad       = Column(Float, nullable=False, default=0)
+    balance     = Column(Float, nullable=True)         # running outstanding after this row
+    created_by  = Column(String(50), nullable=False)
+    created_at  = Column(DateTime(timezone=True), server_default=func.now())
+
+
 class CreditInstallment(Base):
     """
     One payment slot per credit.

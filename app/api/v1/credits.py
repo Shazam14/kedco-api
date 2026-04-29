@@ -6,7 +6,7 @@ from pydantic import BaseModel
 import uuid
 
 from app.core.database import get_db
-from app.models.credit import SpecialCredit, CreditInstallment, CreditDraw, AppSetting, CreditType, CreditStatus
+from app.models.credit import SpecialCredit, CreditInstallment, CreditDraw, CreditLedgerEntry, AppSetting, CreditType, CreditStatus
 from app.api.v1.auth import require_role, TokenData
 
 PHT = timezone(timedelta(hours=8))
@@ -317,6 +317,146 @@ async def get_draw_rules(
         max_per_day=int(_get_setting(db, "credit_draw_max_per_day")),
         max_amount=float(_get_setting(db, "credit_draw_max_amount")),
     )
+
+
+# ── Ledger (Apple-style per-row entries — adminkedco only) ────────────────────
+
+class LedgerEntryIn(BaseModel):
+    date:        date_type
+    time:        Optional[str] = None
+    description: Optional[str] = None
+    palod:       float = 0
+    than:        float = 0
+    bayad:       float = 0
+
+
+class LedgerEntryOut(BaseModel):
+    id:          str
+    date:        date_type
+    time:        Optional[str]
+    description: Optional[str]
+    palod:       float
+    than:        float
+    bayad:       float
+    balance:     Optional[float]
+    created_by:  str
+    created_at:  str
+
+
+class LedgerSummary(BaseModel):
+    palod_sum:        float
+    than_sum:         float
+    bayad_sum:        float
+    opening_balance:  Optional[float]   # balance of last entry BEFORE the range, None if range starts at first entry
+    closing_balance:  Optional[float]   # balance of last entry IN the range
+    count:            int
+
+
+class LedgerOut(BaseModel):
+    entries: list[LedgerEntryOut]
+    summary: LedgerSummary
+
+
+def _entry_to_out(e: CreditLedgerEntry) -> LedgerEntryOut:
+    return LedgerEntryOut(
+        id=str(e.id),
+        date=e.date,
+        time=e.time,
+        description=e.description,
+        palod=e.palod,
+        than=e.than,
+        bayad=e.bayad,
+        balance=e.balance,
+        created_by=e.created_by,
+        created_at=e.created_at.isoformat() if e.created_at else "",
+    )
+
+
+@router.get("/{credit_id}/ledger", response_model=LedgerOut)
+async def get_ledger(
+    credit_id: str,
+    from_date: Optional[date_type] = None,
+    to_date:   Optional[date_type] = None,
+    current_user: TokenData = Depends(require_role("admin")),
+    db: Session = Depends(get_db),
+):
+    credit = db.query(SpecialCredit).filter_by(id=credit_id).first()
+    if not credit:
+        raise HTTPException(status_code=404, detail="Credit not found.")
+
+    q = db.query(CreditLedgerEntry).filter_by(credit_id=credit_id)
+    if from_date:
+        q = q.filter(CreditLedgerEntry.date >= from_date)
+    if to_date:
+        q = q.filter(CreditLedgerEntry.date <= to_date)
+    entries = q.order_by(CreditLedgerEntry.date, CreditLedgerEntry.created_at).all()
+
+    # Opening balance = balance of the entry immediately before the range
+    opening = None
+    if from_date:
+        prior = (db.query(CreditLedgerEntry)
+                   .filter(CreditLedgerEntry.credit_id == credit_id,
+                           CreditLedgerEntry.date < from_date)
+                   .order_by(CreditLedgerEntry.date.desc(),
+                             CreditLedgerEntry.created_at.desc())
+                   .first())
+        opening = prior.balance if prior else None
+
+    closing = entries[-1].balance if entries else opening
+
+    return LedgerOut(
+        entries=[_entry_to_out(e) for e in entries],
+        summary=LedgerSummary(
+            palod_sum=sum(e.palod  for e in entries),
+            than_sum=sum(e.than    for e in entries),
+            bayad_sum=sum(e.bayad  for e in entries),
+            opening_balance=opening,
+            closing_balance=closing,
+            count=len(entries),
+        ),
+    )
+
+
+@router.post("/{credit_id}/ledger", response_model=LedgerEntryOut, status_code=status.HTTP_201_CREATED)
+async def add_ledger_entry(
+    credit_id: str,
+    payload: LedgerEntryIn,
+    current_user: TokenData = Depends(require_role("admin")),
+    db: Session = Depends(get_db),
+):
+    credit = db.query(SpecialCredit).filter_by(id=credit_id).first()
+    if not credit:
+        raise HTTPException(status_code=404, detail="Credit not found.")
+    if payload.palod < 0 or payload.than < 0 or payload.bayad < 0:
+        raise HTTPException(status_code=400, detail="palod, than, bayad must be non-negative.")
+    if payload.palod == 0 and payload.than == 0 and payload.bayad == 0:
+        raise HTTPException(status_code=400, detail="At least one of palod, than, bayad must be greater than zero.")
+
+    # Latest existing entry — its balance is our base
+    last = (db.query(CreditLedgerEntry)
+              .filter_by(credit_id=credit_id)
+              .order_by(CreditLedgerEntry.date.desc(),
+                        CreditLedgerEntry.created_at.desc())
+              .first())
+    prior_balance = last.balance if last and last.balance is not None else 0.0
+    new_balance = round(prior_balance + payload.palod + payload.than - payload.bayad, 2)
+
+    entry = CreditLedgerEntry(
+        id=uuid.uuid4(),
+        credit_id=credit.id,
+        date=payload.date,
+        time=payload.time,
+        description=payload.description,
+        palod=payload.palod,
+        than=payload.than,
+        bayad=payload.bayad,
+        balance=new_balance,
+        created_by=current_user.username,
+    )
+    db.add(entry)
+    db.commit()
+    db.refresh(entry)
+    return _entry_to_out(entry)
 
 
 @router.patch("/settings/draw-rules", response_model=CreditDrawRules)
