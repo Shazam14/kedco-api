@@ -63,8 +63,12 @@ class TestDashboardSummaryFiltersPending:
 
 # ── /report/daily ─────────────────────────────────────────────────────────────
 
-class TestReportDailyFiltersPending:
-    def test_totals_exclude_pending(self, client, admin_user, make_transaction):
+class TestReportDailyAccrualWithPendingBadge:
+    """Daily report is ACCRUAL: PENDING SELL contributes to total_sold_php and
+    is also surfaced via total_sold_php_pending so the frontend can render a
+    receivables badge. BUYs stay RECEIVED-only (PENDING BUY = we owe customer).
+    Spec: see test_report_accrual_with_pending_badge.py."""
+    def test_sold_is_accrual_with_pending_split(self, client, admin_user, make_transaction):
         from app.core.today import get_today
         today = get_today()
         make_transaction(type="SELL", php_amt=10_000, payment_status="RECEIVED")
@@ -78,8 +82,10 @@ class TestReportDailyFiltersPending:
         )
         assert r.status_code == 200, r.text
         body = r.json()
-        assert body["total_sold_php"] == 10_000
-        assert body["total_bought_php"] == 20_000
+        assert body["total_sold_php"] == 15_000           # accrual
+        assert body["total_sold_php_pending"] == 5_000    # receivables badge
+        assert body["pending_count"] == 2                 # 1 SELL + 1 BUY pending
+        assert body["total_bought_php"] == 20_000         # RECEIVED only
 
 
 # ── /shifts/close — expected_cash math ────────────────────────────────────────

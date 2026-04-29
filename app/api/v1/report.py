@@ -38,13 +38,13 @@ async def get_daily_report(
     currencies = {c.code: c for c in db.query(Currency).all()}
 
     # ── By currency ─────────────────��────────────────────────────────────
-    # PENDING transactions are listed but excluded from money-handled totals.
+    # Stock quantity flows on physical handover (PENDING included — the rider
+    # already gave the FX). PHP and THAN flow only on payment confirmation, so
+    # those fields stay filtered to RECEIVED.
     received = lambda t: t.payment_status != PaymentStatus.PENDING
 
     by_currency: dict[str, dict] = {}
     for t in txns:
-        if not received(t):
-            continue
         code = t.currency_code
         if code not in by_currency:
             ccy = currencies.get(code)
@@ -58,16 +58,24 @@ async def get_daily_report(
                 "buy_count":  0, "buy_qty":  0.0, "buy_php":  0.0,
                 "sell_count": 0, "sell_qty": 0.0, "sell_php": 0.0,
                 "than": 0.0,
+                "sell_php_pending": 0.0, "than_pending": 0.0,
             }
         if t.type == "BUY":
             by_currency[code]["buy_count"] += 1
             by_currency[code]["buy_qty"]   += t.foreign_amt
-            by_currency[code]["buy_php"]   += t.php_amt
+            if received(t):
+                by_currency[code]["buy_php"] += t.php_amt
         else:
             by_currency[code]["sell_count"] += 1
             by_currency[code]["sell_qty"]   += t.foreign_amt
+            # Accrual: PENDING SELLs contribute to sell_php / than (matches
+            # Ken's Excel grand totals). Surface separately as *_pending so the
+            # frontend can show a [⏳ pending: ₱X] receivables badge.
             by_currency[code]["sell_php"]   += t.php_amt
             by_currency[code]["than"]       += t.than
+            if not received(t):
+                by_currency[code]["sell_php_pending"] += t.php_amt
+                by_currency[code]["than_pending"]     += t.than
 
     # Sort: MAIN → 2ND → OTHERS, within each by Ken's Excel column order
     category_order = {"MAIN": 0, "2ND": 1, "OTHERS": 2}
@@ -105,10 +113,16 @@ async def get_daily_report(
         by_cashier[name]["commission"] += _comm(t)
 
     # ── Totals ───────────────────────────────────────────────────────────
-    total_bought     = sum(t.php_amt for t in txns if t.type == "BUY"  and received(t))
-    total_sold       = sum(t.php_amt for t in txns if t.type == "SELL" and received(t))
-    total_than       = sum(t.than   for t in txns if received(t))
-    total_commission = sum(_comm(t) for t in txns if received(t))
+    # SELL totals + THAN are ACCRUAL (include PENDING) to match Excel grand
+    # totals; pending split is reported alongside as a receivables view.
+    # BUY total stays RECEIVED-only (PENDING BUY = we owe customer; rare).
+    total_bought       = sum(t.php_amt for t in txns if t.type == "BUY" and received(t))
+    total_sold         = sum(t.php_amt for t in txns if t.type == "SELL")
+    total_than         = sum(t.than   for t in txns)
+    total_commission   = sum(_comm(t) for t in txns if received(t))
+    total_sold_pending = sum(t.php_amt for t in txns if t.type == "SELL" and not received(t))
+    total_than_pending = sum(t.than   for t in txns if not received(t))
+    pending_count      = sum(1 for t in txns if not received(t))
 
     # ── Opening positions ────────────────────────────────────────────────────
     raw_positions = db.query(DailyPosition).filter(
@@ -226,10 +240,13 @@ async def get_daily_report(
         "date":               str(target),
         "generated_at":       datetime.now().strftime("%I:%M %p"),
         "total_transactions":  len(txns),
-        "total_bought_php":    round(total_bought,     2),
-        "total_sold_php":      round(total_sold,       2),
-        "total_than":          round(total_than,       2),
-        "total_commission":    round(total_commission, 2),
+        "total_bought_php":        round(total_bought,         2),
+        "total_sold_php":          round(total_sold,           2),
+        "total_than":              round(total_than,           2),
+        "total_commission":        round(total_commission,     2),
+        "total_sold_php_pending":  round(total_sold_pending,   2),
+        "total_than_pending":      round(total_than_pending,   2),
+        "pending_count":           pending_count,
         "opening_positions":        opening_positions,
         "total_opening_stock_php":  total_opening_stock_php,
         "stock_summary":            stock_summary,
