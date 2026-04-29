@@ -127,13 +127,14 @@ async def get_dashboard_summary(
             unrealized_php=result.unrealized_php,
         ))
 
-    # 8. Recent transactions — display only, limited to 20
+    # 8. Recent transactions — return all of today; PENDING rows must always be
+    # visible (treasurer needs to action them), and client-side filters can hide
+    # rows after fetch, so a server-side cap was masking valid txns.
     recent_txns = (
         db.query(Transaction)
         .filter(Transaction.date == today)
         .filter(~Transaction.cashier.in_(demo_users))
         .order_by(Transaction.created_at.desc())
-        .limit(20)
         .all()
     )
     recent_out = [
