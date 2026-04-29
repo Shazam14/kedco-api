@@ -327,3 +327,130 @@ class TestTransactionCustomerIdRoundtrip:
             json={"customer_id": str(uuid.uuid4())},
         )
         assert r2.status_code == 400
+
+
+# ── Admin-only enriched list ─────────────────────────────────────────────────
+
+class TestAdminCustomerList:
+    """
+    GET /api/v1/admin/customers — list with per-customer txn_count + volume.
+
+    Powers /admin/customers (chunk 3a). The aggregates are the whole point —
+    if they regress, Ken loses the "who are my biggest customers" view.
+    """
+
+    def test_empty_list(self, client, admin_user):
+        r = client.get("/api/v1/admin/customers", headers=auth_header("admintest", "admin"))
+        assert r.status_code == 200
+        assert r.json() == []
+
+    def test_zero_stats_for_customer_with_no_txns(self, client, admin_user, make_customer):
+        make_customer("Brand New")
+        r = client.get("/api/v1/admin/customers", headers=auth_header("admintest", "admin"))
+        rows = r.json()
+        assert len(rows) == 1
+        assert rows[0]["name"] == "Brand New"
+        assert rows[0]["txn_count"] == 0
+        assert rows[0]["total_volume_php"] == 0.0
+        assert rows[0]["last_txn_date"] is None
+
+    def test_aggregates_count_volume_and_last_date(
+        self, client, admin_user, make_customer, make_transaction, seed_currency_and_rate
+    ):
+        c = make_customer("Hannah Wu")
+        # Two RECEIVED txns linked to Hannah
+        make_transaction(php_amt=10_000.0, customer_id=c.id)
+        make_transaction(php_amt=15_000.0, customer_id=c.id)
+        # One unlinked walk-in — must NOT count toward Hannah's totals
+        make_transaction(php_amt=99_999.0)
+
+        r = client.get("/api/v1/admin/customers", headers=auth_header("admintest", "admin"))
+        rows = r.json()
+        assert len(rows) == 1
+        assert rows[0]["name"] == "Hannah Wu"
+        assert rows[0]["txn_count"] == 2
+        assert rows[0]["total_volume_php"] == 25_000.0
+        assert rows[0]["last_txn_date"] is not None
+
+    def test_pending_txns_excluded_from_volume(
+        self, client, admin_user, make_customer, make_transaction, seed_currency_and_rate
+    ):
+        c = make_customer("Hannah Wu")
+        make_transaction(php_amt=10_000.0, customer_id=c.id)  # RECEIVED
+        make_transaction(php_amt=5_000.0,  customer_id=c.id, payment_status="PENDING")
+
+        rows = client.get(
+            "/api/v1/admin/customers", headers=auth_header("admintest", "admin"),
+        ).json()
+        assert rows[0]["txn_count"] == 1
+        assert rows[0]["total_volume_php"] == 10_000.0
+
+    def test_sorted_by_volume_desc(
+        self, client, admin_user, make_customer, make_transaction, seed_currency_and_rate
+    ):
+        small = make_customer("Small Spender")
+        big   = make_customer("Big Spender")
+        mid   = make_customer("Mid Spender")
+        make_transaction(php_amt=1_000.0,  customer_id=small.id)
+        make_transaction(php_amt=50_000.0, customer_id=big.id)
+        make_transaction(php_amt=10_000.0, customer_id=mid.id)
+
+        rows = client.get(
+            "/api/v1/admin/customers", headers=auth_header("admintest", "admin"),
+        ).json()
+        names = [r["name"] for r in rows]
+        assert names == ["Big Spender", "Mid Spender", "Small Spender"]
+
+    def test_q_filters_by_name_or_phone(self, client, admin_user, make_customer):
+        make_customer("Hannah Wu", phone="09171234567")
+        make_customer("Pedro Cruz", phone="09299999999")
+
+        rows = client.get(
+            "/api/v1/admin/customers?q=hann", headers=auth_header("admintest", "admin"),
+        ).json()
+        assert [r["name"] for r in rows] == ["Hannah Wu"]
+
+        rows = client.get(
+            "/api/v1/admin/customers?q=0929", headers=auth_header("admintest", "admin"),
+        ).json()
+        assert [r["name"] for r in rows] == ["Pedro Cruz"]
+
+    def test_inactive_excluded_by_default(self, client, admin_user, make_customer):
+        make_customer("Active One")
+        make_customer("Soft Deleted", is_active=False)
+        rows = client.get(
+            "/api/v1/admin/customers", headers=auth_header("admintest", "admin"),
+        ).json()
+        assert [r["name"] for r in rows] == ["Active One"]
+
+    def test_include_inactive_flag_returns_them(self, client, admin_user, make_customer):
+        make_customer("Active One")
+        make_customer("Soft Deleted", is_active=False)
+        rows = client.get(
+            "/api/v1/admin/customers?include_inactive=true",
+            headers=auth_header("admintest", "admin"),
+        ).json()
+        names = sorted(r["name"] for r in rows)
+        assert names == ["Active One", "Soft Deleted"]
+
+    def test_supervisor_can_access(self, client, supervisor_user, make_customer):
+        make_customer("Hannah Wu")
+        r = client.get(
+            "/api/v1/admin/customers",
+            headers=auth_header("supervisortest", "supervisor"),
+        )
+        assert r.status_code == 200
+
+    def test_cashier_blocked(self, client, cashier_user):
+        r = client.get(
+            "/api/v1/admin/customers",
+            headers=auth_header("cashiertest", "cashier"),
+        )
+        assert r.status_code == 403
+
+    def test_rider_blocked(self, client, rider_user):
+        r = client.get(
+            "/api/v1/admin/customers",
+            headers=auth_header("ridertest", "rider"),
+        )
+        assert r.status_code == 403
