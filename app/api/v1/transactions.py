@@ -98,6 +98,7 @@ async def create_transaction(
         official_rate=official_rate,
         referrer=txn.referrer or None,
         payment_tag=txn.payment_tag or None,
+        payment_status=txn.payment_status or "RECEIVED",
         reference_date=txn.reference_date,
         note=txn.note or None,
         terminal_id=txn.terminal_id or None,
@@ -124,6 +125,7 @@ async def create_transaction(
         official_rate=record.official_rate,
         referrer=record.referrer,
         payment_tag=record.payment_tag,
+        payment_status=record.payment_status,
         reference_date=record.reference_date,
         terminal_id=record.terminal_id,
         branch_id=record.branch_id,
@@ -205,7 +207,8 @@ async def get_today_transactions(
             cashier=r.cashier, customer=r.customer,
             payment_mode=r.payment_mode, bank_id=r.bank_id,
             official_rate=r.official_rate, referrer=r.referrer,
-            payment_tag=r.payment_tag, reference_date=r.reference_date,
+            payment_tag=r.payment_tag, payment_status=r.payment_status,
+            reference_date=r.reference_date,
         )
         for r in rows
     ]
@@ -297,7 +300,8 @@ async def edit_transaction(
         cashier=record.cashier, customer=record.customer,
         payment_mode=record.payment_mode, bank_id=record.bank_id,
         official_rate=record.official_rate, referrer=record.referrer,
-        payment_tag=record.payment_tag, reference_date=record.reference_date,
+        payment_tag=record.payment_tag, payment_status=record.payment_status,
+        reference_date=record.reference_date,
     )
 
 

@@ -25,6 +25,7 @@ class TransactionIn(BaseModel):
     official_rate: Optional[float] = None
     referrer: Optional[str] = None
     payment_tag: Optional[str] = None
+    payment_status: Optional[Literal["RECEIVED", "PENDING"]] = None
     reference_date: Optional[date] = None
     note: Optional[str] = None            # required for EXCESS, optional otherwise
     terminal_id: Optional[str] = None
@@ -48,6 +49,7 @@ class TransactionOut(BaseModel):
     official_rate: Optional[float] = None
     referrer: Optional[str] = None
     payment_tag: Optional[str] = None
+    payment_status: str = "RECEIVED"
     reference_date: Optional[date] = None
     batch_id: Optional[UUID] = None
     terminal_id: Optional[str] = None
