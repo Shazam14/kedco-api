@@ -209,6 +209,7 @@ async def get_today_transactions(
             official_rate=r.official_rate, referrer=r.referrer,
             payment_tag=r.payment_tag, payment_status=r.payment_status,
             reference_date=r.reference_date,
+            terminal_id=r.terminal_id, branch_id=r.branch_id,
         )
         for r in rows
     ]
