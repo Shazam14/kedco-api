@@ -74,6 +74,11 @@ class RemitIn(BaseModel):
     cash_php_remaining: float
     items: list[CurrencyItem]   # forex the rider is returning
 
+
+class ReturnIn(BaseModel):
+    """Treasurer's confirm-return body. All fields optional — TreasurerShell sends no body."""
+    items: list[CurrencyItem] = []
+
 class BorrowIn(BaseModel):
     dispatch_id: str
     source_type: str   # BRANCH | RIDER
@@ -190,7 +195,7 @@ def topup_dispatch(
 @router.patch("/dispatches/{dispatch_id}/return")
 def mark_returned(
     dispatch_id: str,
-    data: RemitIn,
+    data: ReturnIn | None = None,
     db: Session = Depends(get_db),
     _: TokenData = Depends(require_role("admin", "supervisor")),
 ):
@@ -204,10 +209,11 @@ def mark_returned(
     dispatch.return_time = datetime.now().strftime("%I:%M %p")
 
     # If treasurer provides items (recount correction), replace rider's submission.
-    # Empty items leave the rider's remit_items intact.
-    if data.items:
+    # No body / empty items leaves the rider's remit_items intact.
+    items = data.items if data else []
+    if items:
         db.query(RiderRemitItem).filter_by(dispatch_id=dispatch.id).delete()
-        for item in data.items:
+        for item in items:
             db.add(RiderRemitItem(
                 id=uuid.uuid4(),
                 dispatch_id=dispatch.id,

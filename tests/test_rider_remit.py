@@ -215,6 +215,26 @@ class TestTreasurerConfirmReturn:
         assert r.status_code == 404
 
 
+# ── No-body confirm (matches what TreasurerShell sends) ──────────────────────
+
+class TestConfirmReturnNoBody:
+    def test_no_body_succeeds(self, client, admin_user, rider_user, make_dispatch):
+        """TreasurerShell sends PATCH with no body — must succeed, not 422."""
+        d = make_dispatch()
+        client.post(
+            "/api/v1/rider/remit",
+            json={"dispatch_id": str(d.id), "cash_php_remaining": 0, "items": [{"currency": "USD", "amount": 100}]},
+            headers=auth_header("ridertest", "rider"),
+        )
+
+        r = client.patch(
+            f"/api/v1/rider/dispatches/{d.id}/return",
+            headers=auth_header("admintest", "admin"),
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["status"] == "RETURNED"
+
+
 # ── State-machine guards on /return ───────────────────────────────────────────
 
 class TestConfirmReturnStateGuards:
