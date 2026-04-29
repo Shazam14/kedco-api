@@ -197,17 +197,23 @@ def mark_returned(
     dispatch = db.query(RiderDispatch).filter_by(id=dispatch_id).first()
     if not dispatch:
         raise HTTPException(404, "Dispatch not found")
+    if dispatch.status != DispatchStatus.REMITTED:
+        raise HTTPException(400, "Dispatch must be remitted before being marked returned")
 
     dispatch.status = DispatchStatus.RETURNED
     dispatch.return_time = datetime.now().strftime("%I:%M %p")
 
-    for item in data.items:
-        db.add(RiderRemitItem(
-            id=uuid.uuid4(),
-            dispatch_id=dispatch.id,
-            currency=item.currency.upper(),
-            amount=item.amount,
-        ))
+    # If treasurer provides items (recount correction), replace rider's submission.
+    # Empty items leave the rider's remit_items intact.
+    if data.items:
+        db.query(RiderRemitItem).filter_by(dispatch_id=dispatch.id).delete()
+        for item in data.items:
+            db.add(RiderRemitItem(
+                id=uuid.uuid4(),
+                dispatch_id=dispatch.id,
+                currency=item.currency.upper(),
+                amount=item.amount,
+            ))
 
     db.commit()
     return _dispatch_out(dispatch, db)

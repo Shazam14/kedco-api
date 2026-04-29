@@ -213,3 +213,102 @@ class TestTreasurerConfirmReturn:
             headers=auth_header("admintest", "admin"),
         )
         assert r.status_code == 404
+
+
+# ── State-machine guards on /return ───────────────────────────────────────────
+
+class TestConfirmReturnStateGuards:
+    """
+    /return is the treasurer's 'rider returned, money reconciled' step.
+    It must run *after* the rider has self-remitted, and only once.
+    """
+
+    def test_rejects_in_field_dispatch(self, client, admin_user, make_dispatch):
+        d = make_dispatch()
+        # Skip /remit — dispatch is still IN_FIELD
+        r = client.patch(
+            f"/api/v1/rider/dispatches/{d.id}/return",
+            json={"dispatch_id": str(d.id), "cash_php_remaining": 0, "items": []},
+            headers=auth_header("admintest", "admin"),
+        )
+        assert r.status_code == 400
+        assert "remit" in r.json()["detail"].lower()
+
+    def test_rejects_already_returned_dispatch(self, client, admin_user, rider_user, make_dispatch):
+        d = make_dispatch()
+        # rider remits, then admin confirms — second confirm should be rejected
+        client.post(
+            "/api/v1/rider/remit",
+            json={"dispatch_id": str(d.id), "cash_php_remaining": 0, "items": []},
+            headers=auth_header("ridertest", "rider"),
+        )
+        first = client.patch(
+            f"/api/v1/rider/dispatches/{d.id}/return",
+            json={"dispatch_id": str(d.id), "cash_php_remaining": 0, "items": []},
+            headers=auth_header("admintest", "admin"),
+        )
+        assert first.status_code == 200
+
+        second = client.patch(
+            f"/api/v1/rider/dispatches/{d.id}/return",
+            json={"dispatch_id": str(d.id), "cash_php_remaining": 0, "items": []},
+            headers=auth_header("admintest", "admin"),
+        )
+        assert second.status_code == 400
+
+
+# ── Idempotency: items in /return body replace, don't append ─────────────────
+
+class TestConfirmReturnItemsReplace:
+    def test_items_in_return_body_replace_remit_items(self, client, db: Session, admin_user, rider_user, make_dispatch):
+        from app.models.transaction import RiderRemitItem
+        d = make_dispatch()
+        client.post(
+            "/api/v1/rider/remit",
+            json={
+                "dispatch_id": str(d.id),
+                "cash_php_remaining": 0,
+                "items": [{"currency": "USD", "amount": 100}],
+            },
+            headers=auth_header("ridertest", "rider"),
+        )
+
+        # Treasurer confirms with a corrected items list (e.g. recount)
+        client.patch(
+            f"/api/v1/rider/dispatches/{d.id}/return",
+            json={
+                "dispatch_id": str(d.id),
+                "cash_php_remaining": 0,
+                "items": [{"currency": "EUR", "amount": 50}],
+            },
+            headers=auth_header("admintest", "admin"),
+        )
+
+        items = db.query(RiderRemitItem).filter_by(dispatch_id=d.id).all()
+        assert len(items) == 1
+        assert items[0].currency == "EUR"
+        assert items[0].amount == 50
+
+    def test_empty_items_in_return_body_keeps_existing(self, client, db: Session, admin_user, rider_user, make_dispatch):
+        """Treasurer confirming without a recount (most common path) leaves rider's submission untouched."""
+        from app.models.transaction import RiderRemitItem
+        d = make_dispatch()
+        client.post(
+            "/api/v1/rider/remit",
+            json={
+                "dispatch_id": str(d.id),
+                "cash_php_remaining": 0,
+                "items": [{"currency": "USD", "amount": 100}],
+            },
+            headers=auth_header("ridertest", "rider"),
+        )
+
+        client.patch(
+            f"/api/v1/rider/dispatches/{d.id}/return",
+            json={"dispatch_id": str(d.id), "cash_php_remaining": 0, "items": []},
+            headers=auth_header("admintest", "admin"),
+        )
+
+        items = db.query(RiderRemitItem).filter_by(dispatch_id=d.id).all()
+        assert len(items) == 1
+        assert items[0].currency == "USD"
