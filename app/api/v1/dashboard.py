@@ -5,7 +5,7 @@ from datetime import datetime, date, timedelta
 
 from app.core.database import get_db
 from app.models.currency import Currency, DailyRate, DailyPosition
-from app.models.transaction import Transaction, TxnSource, TxnType, RiderDispatch, DispatchStatus
+from app.models.transaction import Transaction, TxnSource, TxnType, RiderDispatch, DispatchStatus, PaymentStatus
 from app.models.shift import TellerShift, ShiftStatus
 from app.models.user import User
 from app.schemas.forex import DashboardSummaryOut, CurrencyPositionOut, TransactionOut, CapitalTrendPoint
@@ -86,9 +86,12 @@ async def get_dashboard_summary(
         .filter(~Transaction.cashier.in_(demo_users))
         .all()
     )
-    total_than   = sum(t.than    for t in sells_today)
-    total_bought = sum(t.php_amt for t in buys_today if t.type == "BUY")
-    total_sold   = sum(t.php_amt for t in sells_today)
+    # PENDING transactions are listed but excluded from financial totals — money
+    # hasn't actually changed hands until the customer pays.
+    received = lambda t: t.payment_status != PaymentStatus.PENDING
+    total_than   = sum(t.than    for t in sells_today if received(t))
+    total_bought = sum(t.php_amt for t in buys_today  if t.type == "BUY" and received(t))
+    total_sold   = sum(t.php_amt for t in sells_today if received(t))
 
     # 7. Compute positions for currencies that have a rate set today
     computed_positions: list[CurrencyPositionOut] = []
@@ -139,6 +142,7 @@ async def get_dashboard_summary(
             currency=t.currency_code, foreign_amt=t.foreign_amt,
             rate=t.rate, php_amt=t.php_amt, than=t.than,
             cashier=t.cashier, customer=t.customer,
+            payment_status=t.payment_status.value if hasattr(t.payment_status, 'value') else (t.payment_status or "RECEIVED"),
         )
         for t in recent_txns
     ]
@@ -167,8 +171,8 @@ async def get_dashboard_summary(
         else:
             # Open shift: opening + SELLs - BUYs + replenishments
             txns = counter_by_cashier.get(shift.cashier, [])
-            sell_php = sum(t.php_amt for t in txns if t.type == TxnType.SELL)
-            buy_php  = sum(t.php_amt for t in txns if t.type == TxnType.BUY)
+            sell_php = sum(t.php_amt for t in txns if t.type == TxnType.SELL and received(t))
+            buy_php  = sum(t.php_amt for t in txns if t.type == TxnType.BUY  and received(t))
             replen   = sum(r.amount_php for r in shift.replenishments)
             php_cash += shift.opening_cash_php + sell_php - buy_php + replen
 
@@ -185,8 +189,8 @@ async def get_dashboard_summary(
 
     for dispatch in active_dispatches:
         txns     = rider_by_username.get(dispatch.rider_username, [])
-        sell_php = sum(t.php_amt for t in txns if t.type == TxnType.SELL)
-        buy_php  = sum(t.php_amt for t in txns if t.type == TxnType.BUY)
+        sell_php = sum(t.php_amt for t in txns if t.type == TxnType.SELL and received(t))
+        buy_php  = sum(t.php_amt for t in txns if t.type == TxnType.BUY  and received(t))
         php_cash += dispatch.cash_php + sell_php - buy_php
 
     opening_capital = php_cash + total_stock

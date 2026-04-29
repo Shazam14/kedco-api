@@ -4,7 +4,7 @@ from datetime import date as date_type, datetime, timedelta
 from typing import Optional
 
 from app.core.database import get_db
-from app.models.transaction import Transaction
+from app.models.transaction import Transaction, PaymentStatus
 from app.models.currency import Currency, DailyPosition
 from app.models.user import User
 from app.models.credit import SpecialCredit, CreditInstallment, CreditStatus
@@ -38,8 +38,13 @@ async def get_daily_report(
     currencies = {c.code: c for c in db.query(Currency).all()}
 
     # ── By currency ─────────────────��────────────────────────────────────
+    # PENDING transactions are listed but excluded from money-handled totals.
+    received = lambda t: t.payment_status != PaymentStatus.PENDING
+
     by_currency: dict[str, dict] = {}
     for t in txns:
+        if not received(t):
+            continue
         code = t.currency_code
         if code not in by_currency:
             ccy = currencies.get(code)
@@ -80,6 +85,8 @@ async def get_daily_report(
     # ── By cashier ───────────────────────────────────────────────────────
     by_cashier: dict[str, dict] = {}
     for t in txns:
+        if not received(t):
+            continue
         name = t.cashier
         if name not in by_cashier:
             by_cashier[name] = {
@@ -98,10 +105,10 @@ async def get_daily_report(
         by_cashier[name]["commission"] += _comm(t)
 
     # ── Totals ───────────────────────────────────────────────────────────
-    total_bought     = sum(t.php_amt for t in txns if t.type == "BUY")
-    total_sold       = sum(t.php_amt for t in txns if t.type == "SELL")
-    total_than       = sum(t.than   for t in txns)
-    total_commission = sum(_comm(t) for t in txns)
+    total_bought     = sum(t.php_amt for t in txns if t.type == "BUY"  and received(t))
+    total_sold       = sum(t.php_amt for t in txns if t.type == "SELL" and received(t))
+    total_than       = sum(t.than   for t in txns if received(t))
+    total_commission = sum(_comm(t) for t in txns if received(t))
 
     # ── Opening positions ────────────────────────────────────────────────────
     raw_positions = db.query(DailyPosition).filter(

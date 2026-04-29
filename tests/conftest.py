@@ -19,7 +19,10 @@ from app.main import app
 from app.core.database import Base, get_db
 from app.core.security import create_access_token, hash_password
 from app.models.user import User
-from app.models.transaction import RiderDispatch, DispatchStatus
+from app.models.transaction import (
+    RiderDispatch, DispatchStatus, Transaction, TxnType, TxnSource,
+    PaymentMode, PaymentStatus,
+)
 from app.core.today import get_today
 
 
@@ -38,10 +41,13 @@ def _setup_schema():
 
 @pytest.fixture
 def db():
-    """Per-test session, with all tables truncated before yield."""
+    """Per-test session, with all tables truncated and route caches cleared."""
     with test_engine.begin() as conn:
         tables = ", ".join(t.name for t in reversed(Base.metadata.sorted_tables))
         conn.execute(text(f"TRUNCATE {tables} RESTART IDENTITY CASCADE"))
+    # Clear dashboard's 30s in-memory cache so prior tests don't leak through.
+    from app.api.v1 import dashboard as _dashboard_mod
+    _dashboard_mod._cache.clear()
     session = TestSessionLocal()
     try:
         yield session
@@ -95,10 +101,60 @@ def rider_user(db) -> User:
     return _make_user(db, "ridertest", "rider", "Rider Test")
 
 
+@pytest.fixture
+def cashier_user(db) -> User:
+    return _make_user(db, "cashiertest", "cashier", "Cashier Test")
+
+
 def auth_header(username: str, role: str) -> dict:
     """Mint a JWT Bearer header. Mirrors what auth.login produces."""
     token = create_access_token({"sub": username, "role": role, "full_name": username})
     return {"Authorization": f"Bearer {token}"}
+
+
+@pytest.fixture
+def make_transaction(db):
+    """Factory: insert a Transaction row. Defaults: today, COUNTER SELL, RECEIVED."""
+    counter = {"n": 0}
+
+    def _make(
+        *,
+        type: str = "SELL",
+        php_amt: float = 10_000.0,
+        currency: str = "USD",
+        foreign_amt: float = 100.0,
+        rate: float = 56.0,
+        than: float = 50.0,
+        source: str = "COUNTER",
+        cashier: str = "cashiertest",
+        payment_status: str = "RECEIVED",
+        daily_avg_cost: float = 55.5,
+        **overrides,
+    ) -> Transaction:
+        counter["n"] += 1
+        txn = Transaction(
+            id=overrides.pop("id", f"OR-TEST{counter['n']:04d}"),
+            date=overrides.pop("date", get_today()),
+            time=overrides.pop("time", "10:00 AM"),
+            type=TxnType(type),
+            source=TxnSource(source),
+            currency_code=currency,
+            foreign_amt=foreign_amt,
+            rate=rate,
+            php_amt=php_amt,
+            daily_avg_cost=daily_avg_cost,
+            than=than if type == "SELL" else 0,
+            cashier=cashier,
+            payment_mode=PaymentMode.CASH,
+            payment_status=PaymentStatus(payment_status),
+            **overrides,
+        )
+        db.add(txn)
+        db.commit()
+        db.refresh(txn)
+        return txn
+
+    return _make
 
 
 @pytest.fixture

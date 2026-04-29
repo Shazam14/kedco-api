@@ -4,7 +4,7 @@ from datetime import datetime, date
 
 from app.core.database import get_db
 from app.models.shift import TellerShift, ShiftStatus, CashReplenishment
-from app.models.transaction import Transaction
+from app.models.transaction import Transaction, PaymentStatus
 from app.models.user import User
 from app.schemas.shift import ShiftOpenIn, ShiftCloseIn, ReplenishIn, ShiftOut, ReplenishmentOut
 from app.api.v1.auth import require_role, TokenData
@@ -26,10 +26,13 @@ def _shift_to_out(shift: TellerShift, db: Session) -> ShiftOut:
         cashier=shift.cashier,
     ).all()
 
-    total_sold       = sum(t.php_amt for t in txns if t.type == "SELL")
-    total_bought     = sum(t.php_amt for t in txns if t.type == "BUY")
-    total_than       = sum(t.than for t in txns)
-    total_commission = sum(_comm(t) for t in txns)
+    # PENDING transactions excluded from financial totals — cashier hasn't
+    # received the PHP yet on a PENDING SELL, hasn't paid yet on a PENDING BUY.
+    received = lambda t: t.payment_status != PaymentStatus.PENDING
+    total_sold       = sum(t.php_amt for t in txns if t.type == "SELL" and received(t))
+    total_bought     = sum(t.php_amt for t in txns if t.type == "BUY"  and received(t))
+    total_than       = sum(t.than for t in txns if received(t))
+    total_commission = sum(_comm(t) for t in txns if received(t))
     total_replenishment = sum(r.amount_php for r in shift.replenishments)
 
     return ShiftOut(
@@ -147,9 +150,11 @@ async def close_shift(
         date=today,
         cashier=current_user.username,
     ).all()
-    total_sold       = sum(t.php_amt for t in txns if t.type == "SELL")
-    total_bought     = sum(t.php_amt for t in txns if t.type == "BUY")
-    total_commission = sum(_comm(t) for t in txns)
+    # PENDING transactions don't move cash on the cashier side until confirmed.
+    received = lambda t: t.payment_status != PaymentStatus.PENDING
+    total_sold       = sum(t.php_amt for t in txns if t.type == "SELL" and received(t))
+    total_bought     = sum(t.php_amt for t in txns if t.type == "BUY"  and received(t))
+    total_commission = sum(_comm(t) for t in txns if received(t))
     total_replenishment = sum(r.amount_php for r in shift.replenishments)
 
     expected = round(shift.opening_cash_php + total_sold - total_bought - total_commission + total_replenishment, 2)
