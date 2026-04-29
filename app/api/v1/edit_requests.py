@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import Optional, Literal
 from datetime import datetime, date
+from uuid import UUID
 import uuid
 
 from app.core.database import get_db
@@ -10,6 +11,7 @@ from app.models.transaction import Transaction
 from app.models.audit import AuditLog
 from app.models.edit_request import TransactionEditRequest, EditRequestStatus
 from app.api.v1.auth import require_role, TokenData
+from app.api.v1.transactions import _validate_customer_id
 from app.core.today import get_today
 from app.services.email import notify_edit_request
 
@@ -19,11 +21,13 @@ router = APIRouter(tags=["edit-requests"])
 class EditRequestIn(BaseModel):
     type:          Optional[Literal["BUY", "SELL"]] = None
     customer:      Optional[str]   = None
+    customer_id:   Optional[UUID]  = None
     payment_mode:  Optional[str]   = None
     rate:          Optional[float] = None
     foreign_amt:   Optional[float] = None
     official_rate: Optional[float] = None
     referrer:      Optional[str]   = None
+    branch_id:     Optional[str]   = None
     note:          Optional[str]   = None
 
 
@@ -34,6 +38,7 @@ class RejectIn(BaseModel):
 def _txn_snapshot(r: Transaction) -> dict:
     return {
         "customer":      r.customer,
+        "customer_id":   str(r.customer_id) if r.customer_id else None,
         "payment_mode":  str(r.payment_mode),
         "rate":          r.rate,
         "foreign_amt":   r.foreign_amt,
@@ -41,6 +46,7 @@ def _txn_snapshot(r: Transaction) -> dict:
         "than":          r.than,
         "official_rate": r.official_rate,
         "referrer":      r.referrer,
+        "branch_id":     r.branch_id,
     }
 
 
@@ -68,7 +74,7 @@ async def submit_edit_request(
     txn_id: str,
     body: EditRequestIn,
     background: BackgroundTasks,
-    current_user: TokenData = Depends(require_role("cashier", "supervisor")),
+    current_user: TokenData = Depends(require_role("cashier", "supervisor", "rider")),
     db: Session = Depends(get_db),
 ):
     txn = db.query(Transaction).filter_by(id=txn_id).first()
@@ -85,14 +91,19 @@ async def submit_edit_request(
     if existing:
         raise HTTPException(status_code=409, detail="A pending edit request already exists for this transaction")
 
+    if body.customer_id is not None:
+        _validate_customer_id(body.customer_id, db)
+
     proposed = {}
     if body.type is not None:          proposed["type"]          = body.type
     if body.customer is not None:      proposed["customer"]      = body.customer or None
+    if body.customer_id is not None:   proposed["customer_id"]   = str(body.customer_id)
     if body.payment_mode is not None:  proposed["payment_mode"]  = body.payment_mode
     if body.rate is not None:          proposed["rate"]          = body.rate
     if body.foreign_amt is not None:   proposed["foreign_amt"]   = body.foreign_amt
     if body.official_rate is not None: proposed["official_rate"] = body.official_rate or None
     if body.referrer is not None:      proposed["referrer"]      = body.referrer or None
+    if body.branch_id is not None:     proposed["branch_id"]     = body.branch_id or None
 
     if not proposed:
         raise HTTPException(status_code=400, detail="No changes submitted")
@@ -119,7 +130,7 @@ async def submit_edit_request(
 
 @router.get("/transactions/my-pending-edits")
 async def my_pending_edits(
-    current_user: TokenData = Depends(require_role("cashier", "supervisor")),
+    current_user: TokenData = Depends(require_role("cashier", "supervisor", "rider")),
     db: Session = Depends(get_db),
 ):
     rows = db.query(TransactionEditRequest).filter_by(
@@ -177,11 +188,17 @@ async def approve_edit_request(
     p = req.proposed
     if "type"          in p: txn.type          = p["type"]
     if "customer"      in p: txn.customer      = p["customer"]
+    if "customer_id"   in p:
+        cid = UUID(p["customer_id"]) if p["customer_id"] else None
+        if cid is not None:
+            _validate_customer_id(cid, db)
+        txn.customer_id = cid
     if "payment_mode"  in p: txn.payment_mode  = p["payment_mode"]
     if "rate"          in p: txn.rate          = p["rate"]
     if "foreign_amt"   in p: txn.foreign_amt   = p["foreign_amt"]
     if "official_rate" in p: txn.official_rate = p["official_rate"]
     if "referrer"      in p: txn.referrer      = p["referrer"]
+    if "branch_id"     in p: txn.branch_id     = p["branch_id"]
 
     if "rate" in p or "foreign_amt" in p or "type" in p:
         txn.php_amt = round(txn.foreign_amt * txn.rate, 2)
