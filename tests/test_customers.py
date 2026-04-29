@@ -454,3 +454,128 @@ class TestAdminCustomerList:
             headers=auth_header("ridertest", "rider"),
         )
         assert r.status_code == 403
+
+
+# ── Admin merge ──────────────────────────────────────────────────────────────
+
+class TestAdminMergeCustomers:
+    """
+    POST /api/v1/admin/customers/{canonical_id}/merge
+
+    Repoints transactions.customer_id from each dupe to canonical, then
+    soft-deletes the dupes. The whole point: dedupe Hannah Wu / Hanna Wuu
+    style entries without losing the txn history they each accumulated.
+    """
+
+    def test_repoints_txns_and_soft_deletes_dupes(
+        self, client, db, admin_user, make_customer, make_transaction, seed_currency_and_rate
+    ):
+        canonical = make_customer("Hannah Wu")
+        dupe1     = make_customer("Hanna Wuu")
+        dupe2     = make_customer("hannah  wu")  # extra space typo
+
+        make_transaction(php_amt=10_000.0, customer_id=canonical.id)
+        make_transaction(php_amt=5_000.0,  customer_id=dupe1.id)
+        make_transaction(php_amt=7_000.0,  customer_id=dupe2.id)
+
+        r = client.post(
+            f"/api/v1/admin/customers/{canonical.id}/merge",
+            headers=auth_header("admintest", "admin"),
+            json={"duplicate_ids": [str(dupe1.id), str(dupe2.id)]},
+        )
+        assert r.status_code == 200, r.text
+        body = r.json()
+        assert body["canonical_id"] == str(canonical.id)
+        assert body["merged_count"] == 2
+        assert body["transactions_repointed"] == 2
+
+        # The /admin/customers list now shows canonical with all three txns
+        rows = client.get(
+            "/api/v1/admin/customers", headers=auth_header("admintest", "admin"),
+        ).json()
+        assert len(rows) == 1
+        assert rows[0]["name"] == "Hannah Wu"
+        assert rows[0]["txn_count"] == 3
+        assert rows[0]["total_volume_php"] == 22_000.0
+
+        # And the dupes are gone from the active list, but visible with include_inactive
+        all_rows = client.get(
+            "/api/v1/admin/customers?include_inactive=true",
+            headers=auth_header("admintest", "admin"),
+        ).json()
+        names = sorted(r["name"] for r in all_rows)
+        assert names == ["Hanna Wuu", "Hannah Wu", "hannah  wu"]
+
+    def test_picker_no_longer_returns_merged_dupes(
+        self, client, admin_user, make_customer, make_transaction, seed_currency_and_rate
+    ):
+        canonical = make_customer("Hannah Wu")
+        dupe = make_customer("Hanna Wuu")
+        client.post(
+            f"/api/v1/admin/customers/{canonical.id}/merge",
+            headers=auth_header("admintest", "admin"),
+            json={"duplicate_ids": [str(dupe.id)]},
+        )
+        rows = client.get(
+            "/api/v1/customers?q=hann", headers=auth_header("admintest", "admin"),
+        ).json()
+        names = [r["name"] for r in rows]
+        assert names == ["Hannah Wu"]
+
+    def test_self_merge_rejected(self, client, admin_user, make_customer):
+        c = make_customer("Hannah")
+        r = client.post(
+            f"/api/v1/admin/customers/{c.id}/merge",
+            headers=auth_header("admintest", "admin"),
+            json={"duplicate_ids": [str(c.id)]},
+        )
+        assert r.status_code == 400
+
+    def test_unknown_canonical_404(self, client, admin_user, make_customer):
+        dupe = make_customer("Hanna")
+        r = client.post(
+            f"/api/v1/admin/customers/{uuid.uuid4()}/merge",
+            headers=auth_header("admintest", "admin"),
+            json={"duplicate_ids": [str(dupe.id)]},
+        )
+        assert r.status_code == 404
+
+    def test_inactive_canonical_rejected(self, client, admin_user, make_customer):
+        canonical = make_customer("Soft Deleted", is_active=False)
+        dupe = make_customer("Hanna")
+        r = client.post(
+            f"/api/v1/admin/customers/{canonical.id}/merge",
+            headers=auth_header("admintest", "admin"),
+            json={"duplicate_ids": [str(dupe.id)]},
+        )
+        assert r.status_code == 400
+
+    def test_already_merged_dupe_rejected(self, client, admin_user, make_customer):
+        canonical_a = make_customer("Hannah Wu")
+        canonical_b = make_customer("Pedro Cruz")
+        dupe        = make_customer("Hanna Wuu", merged_into_id=canonical_a.id)
+        r = client.post(
+            f"/api/v1/admin/customers/{canonical_b.id}/merge",
+            headers=auth_header("admintest", "admin"),
+            json={"duplicate_ids": [str(dupe.id)]},
+        )
+        assert r.status_code == 400
+        assert "already merged" in r.json()["detail"].lower()
+
+    def test_unknown_dupe_id_rejected(self, client, admin_user, make_customer):
+        canonical = make_customer("Hannah Wu")
+        r = client.post(
+            f"/api/v1/admin/customers/{canonical.id}/merge",
+            headers=auth_header("admintest", "admin"),
+            json={"duplicate_ids": [str(uuid.uuid4())]},
+        )
+        assert r.status_code == 400
+
+    def test_supervisor_blocked_admin_only(self, client, supervisor_user, make_customer):
+        a = make_customer("A"); b = make_customer("B")
+        r = client.post(
+            f"/api/v1/admin/customers/{a.id}/merge",
+            headers=auth_header("supervisortest", "supervisor"),
+            json={"duplicate_ids": [str(b.id)]},
+        )
+        assert r.status_code == 403

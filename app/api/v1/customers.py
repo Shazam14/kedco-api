@@ -152,3 +152,69 @@ def admin_list_customers(
         )
         for c, txn_count, total_volume_php, last_txn_date in rows
     ]
+
+
+class MergeIn(BaseModel):
+    duplicate_ids: list[UUID] = Field(min_length=1)
+
+
+class MergeOut(BaseModel):
+    canonical_id: UUID
+    merged_count: int
+    transactions_repointed: int
+
+
+@admin_router.post("/{canonical_id}/merge", response_model=MergeOut)
+def merge_customers(
+    canonical_id: UUID,
+    data: MergeIn,
+    current_user: TokenData = Depends(require_role("admin")),
+    db: Session = Depends(get_db),
+):
+    """
+    Repoint every `transactions.customer_id` from each dupe to the canonical
+    row, then soft-delete the dupes (is_active=False, merged_into_id set).
+
+    Admin-only. Rejects:
+      • canonical missing / inactive / already merged
+      • canonical id appearing in duplicate_ids (no self-merge)
+      • any duplicate id missing
+      • any duplicate already merged elsewhere (no chain merges — would
+        leave existing pointers ambiguous)
+    """
+    canonical = db.query(Customer).filter_by(id=canonical_id).first()
+    if not canonical:
+        raise HTTPException(404, "Canonical customer not found")
+    if not canonical.is_active or canonical.merged_into_id is not None:
+        raise HTTPException(400, "Canonical customer is inactive or already merged")
+
+    dupe_ids = list({d for d in data.duplicate_ids})  # de-dupe the request itself
+    if canonical_id in dupe_ids:
+        raise HTTPException(400, "Cannot merge a customer into itself")
+
+    dupes = db.query(Customer).filter(Customer.id.in_(dupe_ids)).all()
+    if len(dupes) != len(dupe_ids):
+        raise HTTPException(400, "One or more duplicate ids not found")
+    for d in dupes:
+        if d.merged_into_id is not None:
+            raise HTTPException(
+                400,
+                f"Customer {d.id} is already merged into {d.merged_into_id} — "
+                "merge chains are not supported",
+            )
+
+    repointed = (
+        db.query(Transaction)
+        .filter(Transaction.customer_id.in_(dupe_ids))
+        .update({Transaction.customer_id: canonical_id}, synchronize_session=False)
+    )
+    for d in dupes:
+        d.is_active = False
+        d.merged_into_id = canonical_id
+    db.commit()
+
+    return MergeOut(
+        canonical_id=canonical_id,
+        merged_count=len(dupes),
+        transactions_repointed=int(repointed),
+    )
