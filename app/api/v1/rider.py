@@ -8,7 +8,7 @@ import uuid
 from app.core.database import get_db
 from app.api.v1.auth import require_role, TokenData
 from app.models.transaction import (
-    RiderDispatch, RiderDispatchItem, RiderRemitItem,
+    RiderDispatch, RiderDispatchItem, RiderRemitItem, RiderDispatchTopup,
     RiderBorrow, Transaction, DispatchStatus, PaymentStatus,
 )
 from app.models.user import User
@@ -26,8 +26,22 @@ class CurrencyItem(BaseModel):
 class DispatchIn(BaseModel):
     rider_username: str
     cash_php: float = 0
-    items: list[CurrencyItem]
+    items: list[CurrencyItem] = []
     notes: Optional[str] = None
+
+class TopupIn(BaseModel):
+    amount_php: float
+    notes: Optional[str] = None
+
+class TopupOut(BaseModel):
+    id: str
+    amount_php: float
+    time: Optional[str]
+    dispatched_by: Optional[str]
+    notes: Optional[str]
+
+    class Config:
+        from_attributes = True
 
 class RemitIn(BaseModel):
     items: list[CurrencyItem]
@@ -48,6 +62,7 @@ class DispatchOut(BaseModel):
     remit_php: Optional[float]
     items: list[ItemOut]
     remit_items: list[ItemOut]
+    topups: list[TopupOut] = []
     notes: Optional[str]
     dispatched_by: Optional[str]
 
@@ -96,8 +111,13 @@ def dispatch_rider(
     db: Session = Depends(get_db),
     current_user: TokenData = Depends(require_role("admin", "supervisor")),
 ):
-    if not data.items:
-        raise HTTPException(400, "At least one currency item is required")
+    # PHP is cash, not forex inventory — coerce PHP line items into cash_php
+    php_in_items = sum(item.amount for item in data.items if item.currency.upper() == "PHP")
+    forex_items  = [item for item in data.items if item.currency.upper() != "PHP"]
+    total_cash_php = (data.cash_php or 0) + php_in_items
+
+    if total_cash_php <= 0 and not forex_items:
+        raise HTTPException(400, "At least cash or one forex item is required")
 
     rider = db.query(User).filter_by(username=data.rider_username, role="rider").first()
     if not rider:
@@ -116,20 +136,51 @@ def dispatch_rider(
         rider_name=rider.full_name or rider.username,
         status=DispatchStatus.IN_FIELD,
         dispatch_time=datetime.now().strftime("%I:%M %p"),
-        cash_php=data.cash_php,
+        cash_php=total_cash_php,
         notes=data.notes,
         dispatched_by=current_user.username,
     )
     db.add(dispatch)
     db.flush()
 
-    for item in data.items:
+    for item in forex_items:
         db.add(RiderDispatchItem(
             id=uuid.uuid4(),
             dispatch_id=dispatch.id,
             currency=item.currency.upper(),
             amount=item.amount,
         ))
+
+    db.commit()
+    db.refresh(dispatch)
+    return _dispatch_out(dispatch, db)
+
+
+@router.post("/dispatches/{dispatch_id}/topup", response_model=DispatchOut)
+def topup_dispatch(
+    dispatch_id: str,
+    data: TopupIn,
+    db: Session = Depends(get_db),
+    current_user: TokenData = Depends(require_role("admin", "supervisor")),
+):
+    if data.amount_php <= 0:
+        raise HTTPException(400, "Top-up amount must be positive")
+
+    dispatch = db.query(RiderDispatch).filter_by(id=dispatch_id).first()
+    if not dispatch:
+        raise HTTPException(404, "Dispatch not found")
+    if dispatch.status != DispatchStatus.IN_FIELD:
+        raise HTTPException(400, "Can only top up an IN_FIELD dispatch")
+
+    db.add(RiderDispatchTopup(
+        id=uuid.uuid4(),
+        dispatch_id=dispatch.id,
+        amount_php=data.amount_php,
+        time=datetime.now().strftime("%I:%M %p"),
+        dispatched_by=current_user.username,
+        notes=data.notes,
+    ))
+    dispatch.cash_php = (dispatch.cash_php or 0) + data.amount_php
 
     db.commit()
     db.refresh(dispatch)
@@ -287,6 +338,7 @@ def submit_remit(
 def _dispatch_out(d: RiderDispatch, db: Session) -> DispatchOut:
     dispatch_items = db.query(RiderDispatchItem).filter_by(dispatch_id=d.id).order_by(RiderDispatchItem.created_at).all()
     remit_items    = db.query(RiderRemitItem).filter_by(dispatch_id=d.id).order_by(RiderRemitItem.created_at).all()
+    topups         = db.query(RiderDispatchTopup).filter_by(dispatch_id=d.id).order_by(RiderDispatchTopup.created_at).all()
     return DispatchOut(
         id=str(d.id),
         date=d.date,
@@ -299,6 +351,13 @@ def _dispatch_out(d: RiderDispatch, db: Session) -> DispatchOut:
         remit_php=d.remit_php,
         items=[ItemOut(currency=i.currency, amount=i.amount) for i in dispatch_items],
         remit_items=[ItemOut(currency=i.currency, amount=i.amount) for i in remit_items],
+        topups=[TopupOut(
+            id=str(t.id),
+            amount_php=t.amount_php,
+            time=t.time,
+            dispatched_by=t.dispatched_by,
+            notes=t.notes,
+        ) for t in topups],
         notes=d.notes,
         dispatched_by=d.dispatched_by,
     )

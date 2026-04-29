@@ -120,6 +120,19 @@ class RiderRemitItem(Base):
     created_at  = Column(DateTime(timezone=True), server_default=func.now())
 
 
+class RiderDispatchTopup(Base):
+    """Additional PHP cash issued to a dispatched rider during the day. Audit log of mid-shift top-ups."""
+    __tablename__ = "rider_dispatch_topups"
+
+    id            = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    dispatch_id   = Column(UUID(as_uuid=True), ForeignKey("rider_dispatches.id", ondelete="CASCADE"), nullable=False)
+    amount_php    = Column(Float, nullable=False)
+    time          = Column(String(10), nullable=True)
+    dispatched_by = Column(String(50), nullable=True)
+    notes         = Column(String(200), nullable=True)
+    created_at    = Column(DateTime(timezone=True), server_default=func.now())
+
+
 class RiderBorrow(Base):
     """
     Cash borrowed by a rider from a branch or another rider while in the field.
