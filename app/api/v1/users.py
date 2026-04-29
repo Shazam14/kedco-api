@@ -44,6 +44,17 @@ async def list_users(
     return [_user_out(u) for u in users]
 
 
+@router.get("/riders")
+async def list_riders(
+    current_user: TokenData = Depends(require_role("admin", "supervisor")),
+    db: Session = Depends(get_db),
+):
+    """List only rider users — used by dispatch UI on /admin/riders.
+    Allowed for treasurers (supervisor role) so they can dispatch."""
+    users = db.query(User).filter(User.role == UserRole.rider).order_by(User.username).all()
+    return [_user_out(u) for u in users]
+
+
 @router.patch("/{username}")
 async def update_user(
     username: str,
