@@ -73,9 +73,9 @@ class TestRiderOnlineSellForcedPending:
         assert r.status_code == 201, r.text
         assert r.json()["payment_status"] == "RECEIVED"
 
-    def test_rider_buy_with_bank_transfer_unaffected(self, client, rider_user, usd_setup):
-        # Rule only applies to SELL — rider BUYs are rare with non-cash and
-        # behave as the client sent.
+    def test_rider_buy_with_bank_transfer_forced_pending(self, client, rider_user, usd_setup):
+        # Phase 5: rider non-CASH BUY = "we still owe the customer" until treasurer
+        # wires it. Force PENDING regardless of client. Mirrors the SELL-side rule.
         r = client.post(
             "/api/v1/transactions/",
             headers=auth_header("ridertest", "rider"),
@@ -86,7 +86,7 @@ class TestRiderOnlineSellForcedPending:
             },
         )
         assert r.status_code == 201, r.text
-        assert r.json()["payment_status"] == "RECEIVED"
+        assert r.json()["payment_status"] == "PENDING"
 
     def test_cashier_counter_bank_transfer_sell_stays_received(
         self, client, cashier_user, usd_setup

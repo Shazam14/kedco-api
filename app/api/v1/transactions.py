@@ -25,19 +25,20 @@ router = APIRouter(prefix="/transactions", tags=["transactions"])
 def _resolve_slices(
     txn: TransactionIn,
     php_amt: float,
-    is_rider_online_sell: bool,
+    rider_force_pending_noncash: bool,
 ) -> list[dict]:
     """
-    Phase-2 backward-compat:
+    Phase-2/5 backward-compat:
       - payments[] omitted/empty → one slice mirroring legacy payment_mode/payment_status.
-      - payments[] provided → use as-is, but rider non-CASH sell slices are force-PENDING
-        (in-hand math depends on cash-only RECEIVED).
+      - payments[] provided → use as-is, but rider non-CASH slices (BUY or SELL) are
+        force-PENDING (in-hand math depends on cash-only RECEIVED; for BUY a non-cash
+        method = "we still owe the customer" until treasurer wires it).
     """
     if txn.payments:
         out = []
         for p in txn.payments:
             method = p.method.upper()
-            forced = is_rider_online_sell and method != "CASH"
+            forced = rider_force_pending_noncash and method != "CASH"
             status = "PENDING" if forced else (p.status or "RECEIVED")
             out.append({
                 "method": method,
@@ -47,7 +48,7 @@ def _resolve_slices(
             })
         return out
     pmode = (txn.payment_mode or "CASH").upper()
-    forced = is_rider_online_sell and pmode != "CASH"
+    forced = rider_force_pending_noncash and pmode != "CASH"
     status = "PENDING" if forced else (txn.payment_status or "RECEIVED")
     return [{
         "method": pmode,
@@ -166,11 +167,13 @@ async def create_transaction(
 
     _validate_customer_id(txn.customer_id, db)
 
-    # Rider sells paid via online channels (GCash, bank transfer, etc.) don't
-    # land in the rider's bag — treasurer/admin confirms collection later via
-    # the existing confirm-payment flow. Force PENDING regardless of what the
-    # client sent so the in-hand totals stay honest.
-    is_rider_sell = txn.source == "RIDER" and txn.type == "SELL"
+    # Rider non-CASH slices are always pending (BUY or SELL):
+    #   • SELL non-CASH = customer paid via GCash/bank/etc — proceeds haven't landed in
+    #     the rider's bag, treasurer confirms when the deposit clears.
+    #   • BUY  non-CASH = we still owe the customer (bank transfer, cheque), treasurer
+    #     wires it later.
+    # Cash-out-of-pocket BUY = RECEIVED (rider already handed over the cash).
+    rider_force_pending_noncash = txn.source == "RIDER" and txn.type in ("SELL", "BUY")
 
     # EXCESS: no money moves, write a single 0-amount CASH slice for shape parity.
     if is_excess:
@@ -182,7 +185,7 @@ async def create_transaction(
                 detail=f"Sum of payments ({sum(p.amount_php for p in txn.payments):.2f}) "
                        f"does not match php_amt ({php_amt:.2f})",
             )
-        slices = _resolve_slices(txn, php_amt, is_rider_sell)
+        slices = _resolve_slices(txn, php_amt, rider_force_pending_noncash)
 
     # Aggregate parent fields for backward-compat reads (Phase 4 retires these).
     parent_method = slices[0]["method"]
