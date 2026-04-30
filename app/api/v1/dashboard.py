@@ -86,12 +86,23 @@ async def get_dashboard_summary(
         .filter(~Transaction.cashier.in_(demo_users))
         .all()
     )
-    # PENDING transactions are listed but excluded from financial totals — money
-    # hasn't actually changed hands until the customer pays.
+    # PENDING is per-slice (Phase 4): a SELL with a CASH-RECEIVED + GCASH-PENDING
+    # split contributes the cash slice to total_sold and the proportional cash-share
+    # of than. Pre-split fallback uses parent.payment_status (defensive).
+    def _slice_received(t):
+        if t.payments:
+            return sum(p.amount_php for p in t.payments if p.status == PaymentStatus.RECEIVED)
+        return t.php_amt if t.payment_status != PaymentStatus.PENDING else 0.0
+
+    def _received_share(t):
+        if t.php_amt <= 0:
+            return 0.0
+        return _slice_received(t) / t.php_amt
+
     received = lambda t: t.payment_status != PaymentStatus.PENDING
-    total_than   = sum(t.than    for t in sells_today if received(t))
-    total_bought = sum(t.php_amt for t in buys_today  if t.type == "BUY" and received(t))
-    total_sold   = sum(t.php_amt for t in sells_today if received(t))
+    total_than   = sum(t.than * _received_share(t) for t in sells_today)
+    total_bought = sum(_slice_received(t) for t in buys_today  if t.type == "BUY")
+    total_sold   = sum(_slice_received(t) for t in sells_today)
 
     # 7. Compute positions for currencies that have a rate set today
     computed_positions: list[CurrencyPositionOut] = []
@@ -171,9 +182,11 @@ async def get_dashboard_summary(
             php_cash += shift.closing_cash_php
         else:
             # Open shift: opening + SELLs - BUYs + replenishments
+            # Per-slice (Phase 4): only RECEIVED CASH/cash-equivalent slices
+            # affect float; PENDING slices are receivables, not cash on hand.
             txns = counter_by_cashier.get(shift.cashier, [])
-            sell_php = sum(t.php_amt for t in txns if t.type == TxnType.SELL and received(t))
-            buy_php  = sum(t.php_amt for t in txns if t.type == TxnType.BUY  and received(t))
+            sell_php = sum(_slice_received(t) for t in txns if t.type == TxnType.SELL)
+            buy_php  = sum(_slice_received(t) for t in txns if t.type == TxnType.BUY)
             replen   = sum(r.amount_php for r in shift.replenishments)
             php_cash += shift.opening_cash_php + sell_php - buy_php + replen
 
@@ -190,8 +203,8 @@ async def get_dashboard_summary(
 
     for dispatch in active_dispatches:
         txns     = rider_by_username.get(dispatch.rider_username, [])
-        sell_php = sum(t.php_amt for t in txns if t.type == TxnType.SELL and received(t))
-        buy_php  = sum(t.php_amt for t in txns if t.type == TxnType.BUY  and received(t))
+        sell_php = sum(_slice_received(t) for t in txns if t.type == TxnType.SELL)
+        buy_php  = sum(_slice_received(t) for t in txns if t.type == TxnType.BUY)
         php_cash += dispatch.cash_php + sell_php - buy_php
 
     opening_capital = php_cash + total_stock

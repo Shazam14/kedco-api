@@ -4,7 +4,7 @@ from datetime import date as date_type, datetime, timedelta
 from typing import Optional
 
 from app.core.database import get_db
-from app.models.transaction import Transaction, PaymentStatus
+from app.models.transaction import Transaction, PaymentStatus, PaymentMode
 from app.models.currency import Currency, DailyPosition
 from app.models.user import User
 from app.models.credit import SpecialCredit, CreditInstallment, CreditStatus
@@ -37,11 +37,25 @@ async def get_daily_report(
 
     currencies = {c.code: c for c in db.query(Currency).all()}
 
-    # ── By currency ─────────────────��────────────────────────────────────
-    # Stock quantity flows on physical handover (PENDING included — the rider
-    # already gave the FX). PHP and THAN flow only on payment confirmation, so
-    # those fields stay filtered to RECEIVED.
+    # ── Per-slice helpers ────────────────────────────────────────────────
+    # Phase 4: PENDING is per-slice. A SELL with CASH-RECEIVED + GCASH-PENDING
+    # is half-pending, not all-pending. Pre-split fallback: parent.payment_status
+    # is authoritative if no slices exist (defensive — Phase 1 backfilled all).
+    def _slice_pending_php(t):
+        if t.payments:
+            return sum(p.amount_php for p in t.payments if p.status == PaymentStatus.PENDING)
+        return t.php_amt if t.payment_status == PaymentStatus.PENDING else 0.0
+
+    def _slice_received_php(t):
+        if t.payments:
+            return sum(p.amount_php for p in t.payments if p.status == PaymentStatus.RECEIVED)
+        return t.php_amt if t.payment_status != PaymentStatus.PENDING else 0.0
+
     received = lambda t: t.payment_status != PaymentStatus.PENDING
+
+    # ── By currency ──────────────────────────────────────────────────────
+    # Stock quantity flows on physical handover (PENDING included — the rider
+    # already gave the FX). PHP and THAN flow only on payment confirmation.
 
     by_currency: dict[str, dict] = {}
     for t in txns:
@@ -63,19 +77,28 @@ async def get_daily_report(
         if t.type == "BUY":
             by_currency[code]["buy_count"] += 1
             by_currency[code]["buy_qty"]   += t.foreign_amt
-            if received(t):
-                by_currency[code]["buy_php"] += t.php_amt
+            by_currency[code]["buy_php"]   += _slice_received_php(t)
         else:
             by_currency[code]["sell_count"] += 1
             by_currency[code]["sell_qty"]   += t.foreign_amt
             # Accrual: PENDING SELLs contribute to sell_php / than (matches
-            # Ken's Excel grand totals). Surface separately as *_pending so the
-            # frontend can show a [⏳ pending: ₱X] receivables badge.
+            # Ken's Excel grand totals). *_pending split is per-slice, so a
+            # half-pending SELL contributes only its pending half to the badge.
             by_currency[code]["sell_php"]   += t.php_amt
             by_currency[code]["than"]       += t.than
-            if not received(t):
-                by_currency[code]["sell_php_pending"] += t.php_amt
-                by_currency[code]["than_pending"]     += t.than
+            pending_php = _slice_pending_php(t)
+            if pending_php > 0:
+                by_currency[code]["sell_php_pending"] += pending_php
+                if t.php_amt > 0:
+                    by_currency[code]["than_pending"] += t.than * (pending_php / t.php_amt)
+
+    # Round float aggregates to 2dp at the response boundary.
+    for row in by_currency.values():
+        row["buy_php"]          = round(row["buy_php"],          2)
+        row["sell_php"]         = round(row["sell_php"],         2)
+        row["than"]             = round(row["than"],             2)
+        row["sell_php_pending"] = round(row["sell_php_pending"], 2)
+        row["than_pending"]     = round(row["than_pending"],     2)
 
     # Sort: MAIN → 2ND → OTHERS, within each by Ken's Excel column order
     category_order = {"MAIN": 0, "2ND": 1, "OTHERS": 2}
@@ -115,14 +138,52 @@ async def get_daily_report(
     # ── Totals ───────────────────────────────────────────────────────────
     # SELL totals + THAN are ACCRUAL (include PENDING) to match Excel grand
     # totals; pending split is reported alongside as a receivables view.
-    # BUY total stays RECEIVED-only (PENDING BUY = we owe customer; rare).
-    total_bought       = sum(t.php_amt for t in txns if t.type == "BUY" and received(t))
+    # BUY total stays RECEIVED-only (PENDING BUY = we owe customer; rare) but
+    # is now per-slice so a half-paid BUY counts the received slice.
+    total_bought       = sum(_slice_received_php(t) for t in txns if t.type == "BUY")
     total_sold         = sum(t.php_amt for t in txns if t.type == "SELL")
     total_than         = sum(t.than   for t in txns)
     total_commission   = sum(_comm(t) for t in txns if received(t))
-    total_sold_pending = sum(t.php_amt for t in txns if t.type == "SELL" and not received(t))
-    total_than_pending = sum(t.than   for t in txns if not received(t))
-    pending_count      = sum(1 for t in txns if not received(t))
+    total_sold_pending = sum(_slice_pending_php(t) for t in txns if t.type == "SELL")
+    total_than_pending = sum(
+        (t.than * (_slice_pending_php(t) / t.php_amt)) if t.php_amt > 0 else 0.0
+        for t in txns
+    )
+    pending_count      = sum(1 for t in txns if _slice_pending_php(t) > 0)
+
+    # ── By payment method (slice-level aggregate) ────────────────────────────
+    # Net-new in Phase 4 — one row per method seen today, split by direction
+    # (BUY = we paid the customer; SELL = customer paid us). Slice-count, not
+    # txn-count: a SELL with 2 slices contributes 2 to its methods' counts.
+    method_order = [m.value for m in PaymentMode]
+    by_method: dict[str, dict] = {}
+    for t in txns:
+        for p in t.payments:
+            m = p.method.value
+            d = by_method.setdefault(m, {
+                "method":            m,
+                "buy_count":         0,
+                "buy_php":           0.0,
+                "sell_count":        0,
+                "sell_php":          0.0,  # accrual (RECEIVED + PENDING)
+                "sell_php_received": 0.0,
+                "sell_php_pending":  0.0,
+            })
+            if t.type.value == "BUY":
+                d["buy_count"] += 1
+                if p.status == PaymentStatus.RECEIVED:
+                    d["buy_php"] += p.amount_php
+            else:
+                d["sell_count"] += 1
+                d["sell_php"]   += p.amount_php
+                if p.status == PaymentStatus.RECEIVED:
+                    d["sell_php_received"] += p.amount_php
+                else:
+                    d["sell_php_pending"] += p.amount_php
+    by_payment_method = sorted(
+        by_method.values(),
+        key=lambda x: method_order.index(x["method"]) if x["method"] in method_order else 99,
+    )
 
     # ── Opening positions ────────────────────────────────────────────────────
     raw_positions = db.query(DailyPosition).filter(
@@ -253,6 +314,12 @@ async def get_daily_report(
         "total_closing_stock_php":  total_closing_stock_php,
         "by_currency":        sorted_currencies,
         "by_cashier":         sorted(by_cashier.values(), key=lambda x: x["cashier"]),
+        "by_payment_method":  [
+            {**d, "buy_php": round(d["buy_php"], 2), "sell_php": round(d["sell_php"], 2),
+             "sell_php_received": round(d["sell_php_received"], 2),
+             "sell_php_pending": round(d["sell_php_pending"], 2)}
+            for d in by_payment_method
+        ],
         "special_credits": {
             "disbursements":       credit_disbursements,
             "payments":            credit_payments,
@@ -274,6 +341,18 @@ async def get_daily_report(
                 "cashier":     t.cashier,
                 "customer":    t.customer or "",
                 "payment_status": t.payment_status.value if hasattr(t.payment_status, 'value') else (t.payment_status or "RECEIVED"),
+                "payments": [
+                    {
+                        "id":           str(p.id),
+                        "method":       p.method.value,
+                        "amount_php":   p.amount_php,
+                        "status":       p.status.value,
+                        "reference_no": p.reference_no,
+                        "received_at":  p.received_at.isoformat() if p.received_at else None,
+                        "confirmed_by": p.confirmed_by,
+                    }
+                    for p in t.payments
+                ],
             }
             for t in txns
         ],
