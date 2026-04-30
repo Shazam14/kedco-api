@@ -7,7 +7,7 @@ from uuid import UUID
 import uuid
 
 from app.core.database import get_db
-from app.models.transaction import Transaction
+from app.models.transaction import Transaction, TxnPayment
 from app.models.audit import AuditLog
 from app.models.edit_request import TransactionEditRequest, EditRequestStatus
 from app.api.v1.auth import require_role, TokenData
@@ -47,7 +47,37 @@ def _txn_snapshot(r: Transaction) -> dict:
         "official_rate": r.official_rate,
         "referrer":      r.referrer,
         "branch_id":     r.branch_id,
+        "payments": [
+            {"method": str(p.method), "amount_php": p.amount_php, "status": str(p.status)}
+            for p in (r.payments or [])
+        ],
     }
+
+
+def _scale_slices(slices: list[TxnPayment], new_php_amt: float) -> None:
+    """
+    Scale TxnPayment.amount_php proportionally so the slice sum equals new_php_amt.
+    Single-slice (legacy) → set directly. Multi-slice → ratio scale, with rounding
+    residue absorbed by the last slice so the sum stays exact.
+    """
+    if not slices:
+        return
+    if len(slices) == 1:
+        slices[0].amount_php = round(new_php_amt, 2)
+        return
+    old_total = sum(s.amount_php for s in slices)
+    if old_total <= 0:
+        # Defensive: can't scale a zero-sum split. Put the new total on the first slice.
+        for s in slices:
+            s.amount_php = 0.0
+        slices[0].amount_php = round(new_php_amt, 2)
+        return
+    ratio = new_php_amt / old_total
+    running = 0.0
+    for s in slices[:-1]:
+        s.amount_php = round(s.amount_php * ratio, 2)
+        running += s.amount_php
+    slices[-1].amount_php = round(new_php_amt - running, 2)
 
 
 def _req_out(r: TransactionEditRequest) -> dict:
@@ -206,6 +236,8 @@ async def approve_edit_request(
             txn.than = round((txn.rate - txn.daily_avg_cost) * txn.foreign_amt, 2)
         else:
             txn.than = 0.0
+        # Keep slice sum aligned with new php_amt so reports stay consistent.
+        _scale_slices(list(txn.payments or []), txn.php_amt)
 
     req.status      = EditRequestStatus.APPROVED
     req.reviewed_by = current_user.username

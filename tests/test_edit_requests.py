@@ -218,3 +218,82 @@ def test_php_amt_rounds_to_2dp():
     }
     result = apply_proposed_changes(txn, {"rate": 55.555})
     assert result["php_amt"] == round(100.0 * 55.555, 2)  # 5555.5
+
+
+# ── Slice scaling on rate/foreign_amt change ─────────────────────────────────
+# Mirrors _scale_slices() in app/api/v1/edit_requests.py. Phase 6 keeps the
+# slice sum aligned with the parent's recomputed php_amt so reports/totals
+# don't drift when admins approve a rate or amount edit on a split txn.
+
+def scale_slices(slices: list[dict], new_php_amt: float) -> list[dict]:
+    """Pure-python mirror of _scale_slices — operates on dicts, returns scaled copies."""
+    if not slices:
+        return []
+    out = [dict(s) for s in slices]
+    if len(out) == 1:
+        out[0]["amount_php"] = round(new_php_amt, 2)
+        return out
+    old_total = sum(s["amount_php"] for s in out)
+    if old_total <= 0:
+        for s in out:
+            s["amount_php"] = 0.0
+        out[0]["amount_php"] = round(new_php_amt, 2)
+        return out
+    ratio = new_php_amt / old_total
+    running = 0.0
+    for s in out[:-1]:
+        s["amount_php"] = round(s["amount_php"] * ratio, 2)
+        running += s["amount_php"]
+    out[-1]["amount_php"] = round(new_php_amt - running, 2)
+    return out
+
+
+def test_scale_single_slice_syncs_to_new_php_amt():
+    slices = [{"method": "CASH", "amount_php": 28000.0, "status": "RECEIVED"}]
+    out = scale_slices(slices, 28500.0)
+    assert out[0]["amount_php"] == 28500.0
+    assert out[0]["method"] == "CASH"
+
+
+def test_scale_two_slices_proportionally():
+    # 7600 + 3600 = 11200; new total 12000 → ratio 12000/11200
+    slices = [
+        {"method": "CASH",  "amount_php": 7600.0, "status": "RECEIVED"},
+        {"method": "GCASH", "amount_php": 3600.0, "status": "PENDING"},
+    ]
+    out = scale_slices(slices, 12000.0)
+    assert sum(s["amount_php"] for s in out) == 12000.0
+    # First slice scales: round(7600 * 12000/11200, 2) = 8142.86
+    assert out[0]["amount_php"] == 8142.86
+    # Last slice absorbs residue: 12000 - 8142.86 = 3857.14
+    assert out[1]["amount_php"] == 3857.14
+    # Methods/statuses preserved
+    assert out[0]["method"] == "CASH"
+    assert out[1]["status"] == "PENDING"
+
+
+def test_scale_three_slices_residue_lands_on_last():
+    # Awkward split that would otherwise leak a centavo without residue handling
+    slices = [
+        {"method": "CASH",          "amount_php": 100.0, "status": "RECEIVED"},
+        {"method": "GCASH",         "amount_php": 100.0, "status": "RECEIVED"},
+        {"method": "BANK_TRANSFER", "amount_php": 100.0, "status": "PENDING"},
+    ]
+    out = scale_slices(slices, 1000.0)
+    assert sum(s["amount_php"] for s in out) == 1000.0
+
+
+def test_scale_empty_slices_no_op():
+    assert scale_slices([], 5000.0) == []
+
+
+def test_scale_zero_total_falls_back_to_first_slice():
+    # Defensive: if existing slices sum to 0, dump the new total on slice 0.
+    slices = [
+        {"method": "CASH",  "amount_php": 0.0, "status": "RECEIVED"},
+        {"method": "GCASH", "amount_php": 0.0, "status": "RECEIVED"},
+    ]
+    out = scale_slices(slices, 500.0)
+    assert sum(s["amount_php"] for s in out) == 500.0
+    assert out[0]["amount_php"] == 500.0
+    assert out[1]["amount_php"] == 0.0

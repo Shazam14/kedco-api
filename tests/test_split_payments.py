@@ -232,3 +232,116 @@ class TestSliceAlsoWrittenForLegacyShape:
         assert len(rows) == 1
         assert rows[0].amount_php == 5700.0
         assert rows[0].method.value == "CASH"
+
+
+class TestEditRequestApprovalScalesSlices:
+    """Phase 6 — when admin approves an edit on a split txn that changes the rate
+    or foreign_amt, the parent's php_amt is recomputed AND the slice amounts are
+    scaled proportionally so sum(slices) stays equal to parent.php_amt. Without
+    this, daily reports would silently leak the difference."""
+
+    def test_rate_change_scales_two_slice_sell(self, client, db, admin_user, cashier_user, usd_setup):
+        from app.models.transaction import TxnPayment
+
+        # 1) Cashier creates a 100 USD SELL @ 58.0 → 5800 PHP, paid CASH 2000 + GCASH 3800.
+        create = client.post(
+            "/api/v1/transactions/",
+            headers=auth_header("cashiertest", "cashier"),
+            json={
+                "type": "SELL", "source": "COUNTER", "currency": "USD",
+                "foreign_amt": 100, "rate": 58.0, "cashier": "cashiertest",
+                "payments": [
+                    {"method": "CASH",  "amount_php": 2000.0},
+                    {"method": "GCASH", "amount_php": 3800.0, "status": "PENDING"},
+                ],
+            },
+        )
+        assert create.status_code == 201, create.text
+        txn_id = create.json()["id"]
+
+        # 2) Cashier submits an edit-request: bump rate from 58.0 → 59.0 (new php_amt = 5900).
+        edit = client.post(
+            f"/api/v1/transactions/{txn_id}/edit-request",
+            headers=auth_header("cashiertest", "cashier"),
+            json={"rate": 59.0, "note": "wrong sell rate"},
+        )
+        assert edit.status_code == 200, edit.text
+        req_id = edit.json()["id"]
+
+        # 3) Admin approves.
+        approve = client.post(
+            f"/api/v1/admin/edit-requests/{req_id}/approve",
+            headers=auth_header("admintest", "admin"),
+        )
+        assert approve.status_code == 200, approve.text
+
+        # 4) Slices should now sum to 5900 (scaled from 5800).
+        rows = db.query(TxnPayment).filter_by(txn_id=txn_id).all()
+        assert len(rows) == 2
+        total = round(sum(r.amount_php for r in rows), 2)
+        assert total == 5900.0, f"slice sum {total} ≠ parent php_amt 5900.0"
+        # Methods/statuses preserved
+        assert {r.method.value for r in rows} == {"CASH", "GCASH"}
+
+    def test_rate_change_syncs_single_slice_legacy_txn(self, client, db, admin_user, cashier_user, usd_setup):
+        from app.models.transaction import TxnPayment
+
+        # Single-slice (legacy shape) txn.
+        create = client.post(
+            "/api/v1/transactions/",
+            headers=auth_header("cashiertest", "cashier"),
+            json={
+                "type": "SELL", "source": "COUNTER", "currency": "USD",
+                "foreign_amt": 100, "rate": 58.0, "cashier": "cashiertest",
+                "payment_mode": "CASH",
+            },
+        )
+        assert create.status_code == 201
+        txn_id = create.json()["id"]
+
+        edit = client.post(
+            f"/api/v1/transactions/{txn_id}/edit-request",
+            headers=auth_header("cashiertest", "cashier"),
+            json={"foreign_amt": 200.0},  # 200 * 58 = 11600
+        )
+        req_id = edit.json()["id"]
+        client.post(
+            f"/api/v1/admin/edit-requests/{req_id}/approve",
+            headers=auth_header("admintest", "admin"),
+        )
+
+        rows = db.query(TxnPayment).filter_by(txn_id=txn_id).all()
+        assert len(rows) == 1
+        assert rows[0].amount_php == 11600.0
+
+    def test_customer_only_change_does_not_touch_slices(self, client, db, admin_user, cashier_user, usd_setup):
+        from app.models.transaction import TxnPayment
+
+        create = client.post(
+            "/api/v1/transactions/",
+            headers=auth_header("cashiertest", "cashier"),
+            json={
+                "type": "SELL", "source": "COUNTER", "currency": "USD",
+                "foreign_amt": 100, "rate": 58.0, "cashier": "cashiertest",
+                "payments": [
+                    {"method": "CASH",  "amount_php": 2000.0},
+                    {"method": "GCASH", "amount_php": 3800.0, "status": "PENDING"},
+                ],
+            },
+        )
+        txn_id = create.json()["id"]
+        before = sorted([(r.method.value, r.amount_php) for r in db.query(TxnPayment).filter_by(txn_id=txn_id).all()])
+
+        edit = client.post(
+            f"/api/v1/transactions/{txn_id}/edit-request",
+            headers=auth_header("cashiertest", "cashier"),
+            json={"customer": "Maria"},
+        )
+        req_id = edit.json()["id"]
+        client.post(
+            f"/api/v1/admin/edit-requests/{req_id}/approve",
+            headers=auth_header("admintest", "admin"),
+        )
+
+        after = sorted([(r.method.value, r.amount_php) for r in db.query(TxnPayment).filter_by(txn_id=txn_id).all()])
+        assert before == after, "slices should not be touched when only customer changes"
