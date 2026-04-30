@@ -8,15 +8,85 @@ import uuid
 
 from app.core.database import get_db
 from app.core.today import get_today
-from app.models.transaction import Transaction
+from app.models.transaction import Transaction, TxnPayment
 from app.models.audit import AuditLog
 from app.models.currency import DailyRate, DailyPosition
 from app.models.customer import Customer
-from app.schemas.forex import TransactionIn, TransactionOut, TransactionPatch, TransactionBatchIn
+from app.schemas.forex import (
+    TransactionIn, TransactionOut, TransactionPatch, TransactionBatchIn,
+    PaymentSliceIn, PaymentSliceOut,
+)
 from app.services.forex import compute_position, CarryIn, TodayBuy
 from app.api.v1.auth import require_role, TokenData
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
+
+
+def _resolve_slices(
+    txn: TransactionIn,
+    php_amt: float,
+    is_rider_online_sell: bool,
+) -> list[dict]:
+    """
+    Phase-2 backward-compat:
+      - payments[] omitted/empty → one slice mirroring legacy payment_mode/payment_status.
+      - payments[] provided → use as-is, but rider non-CASH sell slices are force-PENDING
+        (in-hand math depends on cash-only RECEIVED).
+    """
+    if txn.payments:
+        out = []
+        for p in txn.payments:
+            method = p.method.upper()
+            forced = is_rider_online_sell and method != "CASH"
+            status = "PENDING" if forced else (p.status or "RECEIVED")
+            out.append({
+                "method": method,
+                "amount_php": round(p.amount_php, 2),
+                "status": status,
+                "reference_no": p.reference_no,
+            })
+        return out
+    pmode = (txn.payment_mode or "CASH").upper()
+    forced = is_rider_online_sell and pmode != "CASH"
+    status = "PENDING" if forced else (txn.payment_status or "RECEIVED")
+    return [{
+        "method": pmode,
+        "amount_php": round(php_amt, 2),
+        "status": status,
+        "reference_no": None,
+    }]
+
+
+def _slices_out(record: Transaction) -> list[PaymentSliceOut]:
+    out = []
+    for p in (record.payments or []):
+        out.append(PaymentSliceOut(
+            id=p.id,
+            method=p.method.value if hasattr(p.method, "value") else str(p.method),
+            amount_php=p.amount_php,
+            status=p.status.value if hasattr(p.status, "value") else str(p.status),
+            reference_no=p.reference_no,
+            received_at=p.received_at,
+            confirmed_by=p.confirmed_by,
+        ))
+    return out
+
+
+def _to_txn_out(r: Transaction) -> TransactionOut:
+    return TransactionOut(
+        id=r.id, time=r.time, type=r.type, source=r.source,
+        currency=r.currency_code, foreign_amt=r.foreign_amt,
+        rate=r.rate, php_amt=r.php_amt, than=r.than,
+        cashier=r.cashier, customer=r.customer, customer_id=r.customer_id,
+        payment_mode=r.payment_mode, bank_id=r.bank_id,
+        official_rate=r.official_rate, referrer=r.referrer,
+        payment_tag=r.payment_tag, payment_status=r.payment_status,
+        reference_date=r.reference_date,
+        batch_id=r.batch_id,
+        terminal_id=r.terminal_id, branch_id=r.branch_id,
+        date=r.date,
+        payments=_slices_out(r),
+    )
 
 
 def _validate_customer_id(customer_id, db: Session) -> None:
@@ -100,11 +170,23 @@ async def create_transaction(
     # land in the rider's bag — treasurer/admin confirms collection later via
     # the existing confirm-payment flow. Force PENDING regardless of what the
     # client sent so the in-hand totals stay honest.
-    pmode = (txn.payment_mode or "CASH").upper()
-    rider_online_sell = (
-        txn.source == "RIDER" and txn.type == "SELL" and pmode != "CASH"
-    )
-    payment_status = "PENDING" if rider_online_sell else (txn.payment_status or "RECEIVED")
+    is_rider_sell = txn.source == "RIDER" and txn.type == "SELL"
+
+    # EXCESS: no money moves, write a single 0-amount CASH slice for shape parity.
+    if is_excess:
+        slices = [{"method": "CASH", "amount_php": 0.0, "status": "RECEIVED", "reference_no": None}]
+    else:
+        if txn.payments and abs(sum(p.amount_php for p in txn.payments) - php_amt) > 0.01:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Sum of payments ({sum(p.amount_php for p in txn.payments):.2f}) "
+                       f"does not match php_amt ({php_amt:.2f})",
+            )
+        slices = _resolve_slices(txn, php_amt, is_rider_sell)
+
+    # Aggregate parent fields for backward-compat reads (Phase 4 retires these).
+    parent_method = slices[0]["method"]
+    parent_status = "PENDING" if any(s["status"] == "PENDING" for s in slices) else "RECEIVED"
 
     # Generate ID: OR-XXXXXXXX for counter, RD-XXXXXXXX for rider
     prefix = "RD" if txn.source == "RIDER" else "OR"
@@ -125,44 +207,35 @@ async def create_transaction(
         cashier=current_user.username,
         customer=txn.customer,
         customer_id=txn.customer_id,
-        payment_mode=txn.payment_mode or "CASH",
+        payment_mode=parent_method,
         bank_id=txn.bank_id,
         official_rate=official_rate,
         referrer=txn.referrer or None,
         payment_tag=txn.payment_tag or None,
-        payment_status=payment_status,
+        payment_status=parent_status,
         reference_date=txn.reference_date,
         note=txn.note or None,
         terminal_id=txn.terminal_id or None,
         branch_id=txn.branch_id or None,
     )
     db.add(record)
+    db.flush()
+
+    now_dt = datetime.now()
+    for s in slices:
+        db.add(TxnPayment(
+            txn_id=record.id,
+            method=s["method"],
+            amount_php=s["amount_php"],
+            status=s["status"],
+            reference_no=s["reference_no"],
+            received_at=now_dt if s["status"] == "RECEIVED" else None,
+            confirmed_by=current_user.username if s["status"] == "RECEIVED" else None,
+        ))
     db.commit()
     db.refresh(record)
 
-    return TransactionOut(
-        id=record.id,
-        time=record.time,
-        type=record.type,
-        source=record.source,
-        currency=record.currency_code,
-        foreign_amt=record.foreign_amt,
-        rate=record.rate,
-        php_amt=record.php_amt,
-        than=record.than,
-        cashier=record.cashier,
-        customer=record.customer,
-        customer_id=record.customer_id,
-        payment_mode=record.payment_mode,
-        bank_id=record.bank_id,
-        official_rate=record.official_rate,
-        referrer=record.referrer,
-        payment_tag=record.payment_tag,
-        payment_status=record.payment_status,
-        reference_date=record.reference_date,
-        terminal_id=record.terminal_id,
-        branch_id=record.branch_id,
-    )
+    return _to_txn_out(record)
 
 
 @router.post("/batch", response_model=list[TransactionOut], status_code=status.HTTP_201_CREATED)
@@ -178,6 +251,8 @@ async def create_batch_transaction(
     _validate_customer_id(batch.customer_id, db)
 
     records = []
+    pmode = (batch.payment_mode or "CASH").upper()
+    now_dt = datetime.now()
     for item in batch.items:
         daily_avg = _get_daily_avg(item.currency, today, db)
         php_amt = round(item.foreign_amt * item.rate, 2)
@@ -191,7 +266,7 @@ async def create_batch_transaction(
             daily_avg_cost=daily_avg, than=than,
             cashier=current_user.username, customer=batch.customer,
             customer_id=batch.customer_id,
-            payment_mode=batch.payment_mode or "CASH",
+            payment_mode=pmode,
             bank_id=batch.bank_id,
             official_rate=item.official_rate,
             referrer=batch.referrer or None,
@@ -200,21 +275,22 @@ async def create_batch_transaction(
             branch_id=batch.branch_id or None,
         )
         db.add(record)
+        db.flush()
+        db.add(TxnPayment(
+            txn_id=record.id,
+            method=pmode,
+            amount_php=php_amt,
+            status="RECEIVED",
+            received_at=now_dt,
+            confirmed_by=current_user.username,
+        ))
         records.append(record)
 
     db.commit()
     for r in records:
         db.refresh(r)
 
-    return [TransactionOut(
-        id=r.id, time=r.time, type=r.type, source=r.source,
-        currency=r.currency_code, foreign_amt=r.foreign_amt,
-        rate=r.rate, php_amt=r.php_amt, than=r.than,
-        cashier=r.cashier, customer=r.customer, customer_id=r.customer_id,
-        payment_mode=r.payment_mode, bank_id=r.bank_id,
-        official_rate=r.official_rate, referrer=r.referrer,
-        batch_id=r.batch_id,
-    ) for r in records]
+    return [_to_txn_out(r) for r in records]
 
 
 @router.get("/today", response_model=list[TransactionOut])
@@ -235,20 +311,7 @@ async def get_today_transactions(
         if shift:
             q = q.filter(Transaction.created_at >= shift.opened_at)
     rows = q.order_by(Transaction.created_at.desc()).all()
-    return [
-        TransactionOut(
-            id=r.id, time=r.time, type=r.type, source=r.source,
-            currency=r.currency_code, foreign_amt=r.foreign_amt,
-            rate=r.rate, php_amt=r.php_amt, than=r.than,
-            cashier=r.cashier, customer=r.customer, customer_id=r.customer_id,
-            payment_mode=r.payment_mode, bank_id=r.bank_id,
-            official_rate=r.official_rate, referrer=r.referrer,
-            payment_tag=r.payment_tag, payment_status=r.payment_status,
-            reference_date=r.reference_date,
-            terminal_id=r.terminal_id, branch_id=r.branch_id,
-        )
-        for r in rows
-    ]
+    return [_to_txn_out(r) for r in rows]
 
 
 @router.patch("/{txn_id}", response_model=TransactionOut)
@@ -333,16 +396,7 @@ async def edit_transaction(
     db.commit()
     db.refresh(record)
 
-    return TransactionOut(
-        id=record.id, time=record.time, type=record.type, source=record.source,
-        currency=record.currency_code, foreign_amt=record.foreign_amt,
-        rate=record.rate, php_amt=record.php_amt, than=record.than,
-        cashier=record.cashier, customer=record.customer, customer_id=record.customer_id,
-        payment_mode=record.payment_mode, bank_id=record.bank_id,
-        official_rate=record.official_rate, referrer=record.referrer,
-        payment_tag=record.payment_tag, payment_status=record.payment_status,
-        reference_date=record.reference_date,
-    )
+    return _to_txn_out(record)
 
 
 class CustomerLinkIn(BaseModel):
@@ -381,17 +435,7 @@ async def link_customer_to_transaction(
     db.commit()
     db.refresh(record)
 
-    return TransactionOut(
-        id=record.id, time=record.time, type=record.type, source=record.source,
-        currency=record.currency_code, foreign_amt=record.foreign_amt,
-        rate=record.rate, php_amt=record.php_amt, than=record.than,
-        cashier=record.cashier, customer=record.customer, customer_id=record.customer_id,
-        payment_mode=record.payment_mode, bank_id=record.bank_id,
-        official_rate=record.official_rate, referrer=record.referrer,
-        payment_tag=record.payment_tag, payment_status=record.payment_status,
-        reference_date=record.reference_date,
-        terminal_id=record.terminal_id, branch_id=record.branch_id,
-    )
+    return _to_txn_out(record)
 
 
 @router.get("/commissions", response_model=list[TransactionOut])
@@ -407,15 +451,4 @@ async def get_commissions(
     if date_to:
         q = q.filter(Transaction.date <= date_to)
     rows = q.order_by(Transaction.date.desc(), Transaction.created_at.desc()).all()
-    return [
-        TransactionOut(
-            id=r.id, time=r.time, type=r.type, source=r.source,
-            currency=r.currency_code, foreign_amt=r.foreign_amt,
-            rate=r.rate, php_amt=r.php_amt, than=r.than,
-            cashier=r.cashier, customer=r.customer, customer_id=r.customer_id,
-            payment_mode=r.payment_mode,
-            official_rate=r.official_rate, referrer=r.referrer,
-            date=r.date,
-        )
-        for r in rows
-    ]
+    return [_to_txn_out(r) for r in rows]

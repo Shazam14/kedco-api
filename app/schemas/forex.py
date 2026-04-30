@@ -12,6 +12,23 @@ class CurrencyRateIn(BaseModel):
     buy_rate: float
 
 
+class PaymentSliceIn(BaseModel):
+    method: Literal["CASH", "GCASH", "MAYA", "SHOPEEPAY", "BANK_TRANSFER", "CHEQUE", "OTHER"]
+    amount_php: float
+    status: Optional[Literal["RECEIVED", "PENDING"]] = None
+    reference_no: Optional[str] = None
+
+
+class PaymentSliceOut(BaseModel):
+    id: UUID
+    method: str
+    amount_php: float
+    status: str
+    reference_no: Optional[str] = None
+    received_at: Optional[datetime] = None
+    confirmed_by: Optional[str] = None
+
+
 class TransactionIn(BaseModel):
     type: Literal["BUY", "SELL", "EXCESS"]
     source: Literal["COUNTER", "RIDER"]
@@ -31,6 +48,7 @@ class TransactionIn(BaseModel):
     note: Optional[str] = None            # required for EXCESS, optional otherwise
     terminal_id: Optional[str] = None
     branch_id: Optional[str] = None
+    payments: Optional[List[PaymentSliceIn]] = None  # omit = single slice from payment_mode
 
 
 class TransactionOut(BaseModel):
@@ -57,6 +75,7 @@ class TransactionOut(BaseModel):
     terminal_id: Optional[str] = None
     branch_id: Optional[str] = None
     date: Optional[_Date] = None
+    payments: List[PaymentSliceOut] = []
 
 
 class BatchItemIn(BaseModel):

@@ -9,7 +9,7 @@ from app.core.database import get_db
 from app.api.v1.auth import require_role, TokenData
 from app.models.transaction import (
     RiderDispatch, RiderDispatchItem, RiderRemitItem, RiderDispatchTopup,
-    RiderBorrow, Transaction, DispatchStatus, PaymentStatus,
+    RiderBorrow, Transaction, TxnPayment, DispatchStatus, PaymentStatus,
 )
 from app.models.user import User
 from app.core.today import get_today
@@ -286,9 +286,17 @@ def confirm_payment(
         raise HTTPException(404, "Transaction not found")
     if txn.payment_status == PaymentStatus.RECEIVED:
         raise HTTPException(400, "Payment already confirmed")
+    now_dt = datetime.now()
     txn.payment_status = PaymentStatus.RECEIVED
     txn.confirmed_by   = current_user.username
-    txn.confirmed_at   = datetime.now()
+    txn.confirmed_at   = now_dt
+    # Mirror parent flip onto every still-pending slice. Phase 6 will move to
+    # per-slice confirmation; for now treasurer-confirm clears the whole txn.
+    pending = db.query(TxnPayment).filter_by(txn_id=txn.id, status=PaymentStatus.PENDING).all()
+    for slice_ in pending:
+        slice_.status = PaymentStatus.RECEIVED
+        slice_.confirmed_by = current_user.username
+        slice_.received_at = now_dt
     db.commit()
     return {"message": "Payment confirmed", "confirmed_by": current_user.username}
 
