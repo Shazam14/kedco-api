@@ -7,6 +7,7 @@ def compute_expected_cash(
     total_bought: float,
     total_commission: float = 0.0,
     total_replenishment: float = 0.0,
+    total_petty_cash: float = 0.0,
 ) -> float:
     """
     What the cashier's drawer should hold at shift close.
@@ -15,9 +16,11 @@ def compute_expected_cash(
     SELL → Kedco receives PHP → drawer grows
     Commission paid out → drawer shrinks
     Replenishment in    → drawer grows
+    Petty cash paid out (expenses) → drawer shrinks
     """
     return round(
-        opening_cash + total_sold - total_bought - total_commission + total_replenishment,
+        opening_cash + total_sold - total_bought - total_commission
+        + total_replenishment - total_petty_cash,
         2,
     )
 

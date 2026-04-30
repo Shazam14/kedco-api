@@ -5,6 +5,7 @@ from datetime import datetime, date
 from app.core.database import get_db
 from app.models.shift import TellerShift, ShiftStatus, CashReplenishment
 from app.models.transaction import Transaction, PaymentStatus
+from app.models.expense import Expense, ExpenseStatus
 from app.models.user import User
 from app.schemas.shift import ShiftOpenIn, ShiftCloseIn, ReplenishIn, ShiftOut, ReplenishmentOut
 from app.api.v1.auth import require_role, TokenData
@@ -36,6 +37,16 @@ def _shift_to_out(shift: TellerShift, db: Session) -> ShiftOut:
     total_commission = sum(_comm(t) for t in txns if received(t))
     total_replenishment = sum(r.amount_php for r in shift.replenishments)
 
+    # PENDING + APPROVED count against the till (cash already left); REJECTED
+    # means admin reversed it, so the cashier's drawer should reconcile as if
+    # the expense never happened.
+    petty_cash_rows = db.query(Expense).filter(
+        Expense.recorded_by == shift.cashier,
+        Expense.date == shift.date,
+        Expense.status != ExpenseStatus.REJECTED,
+    ).all()
+    total_petty_cash = sum(e.amount_php for e in petty_cash_rows)
+
     return ShiftOut(
         id=str(shift.id),
         date=shift.date,
@@ -57,6 +68,7 @@ def _shift_to_out(shift: TellerShift, db: Session) -> ShiftOut:
         total_than=round(total_than, 2),
         total_commission=round(total_commission, 2),
         total_replenishment_php=round(total_replenishment, 2),
+        total_petty_cash_php=round(total_petty_cash, 2),
         replenishments=[
             ReplenishmentOut(id=str(r.id), amount_php=r.amount_php, note=r.note, added_at=r.added_at)
             for r in shift.replenishments
@@ -158,9 +170,19 @@ async def close_shift(
     total_commission = sum(_comm(t) for t in txns if received(t))
     total_replenishment = sum(r.amount_php for r in shift.replenishments)
 
+    # Petty cash that left the till during this shift's date.
+    # PENDING + APPROVED count; REJECTED means admin reversed the expense.
+    petty_cash_rows = db.query(Expense).filter(
+        Expense.recorded_by == current_user.username,
+        Expense.date == today,
+        Expense.status != ExpenseStatus.REJECTED,
+    ).all()
+    total_petty_cash = sum(e.amount_php for e in petty_cash_rows)
+
     expected = compute_expected_cash(
         shift.opening_cash_php,
         total_sold, total_bought, total_commission, total_replenishment,
+        total_petty_cash,
     )
     variance = compute_variance(body.closing_cash_php, expected)
 

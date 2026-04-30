@@ -87,6 +87,30 @@ class TestExpectedCash:
         # raw: 1000 + 1234.567 - 567.891 = 1666.676 → rounds to 1666.68
         assert result == pytest.approx(1666.68, abs=0.005)
 
+    def test_petty_cash_decreases_drawer(self):
+        """Petty cash (expenses) paid from the till should reduce expected cash."""
+        # Apr 23 reproducer: opening 900k, no txns, ₱400 in expenses → expected 899,600
+        result = _compute_expected_cash_prod(
+            opening_cash=900_000.0,
+            total_sold=0.0,
+            total_bought=0.0,
+            total_petty_cash=400.0,
+        )
+        assert result == pytest.approx(899_600.0)
+
+    def test_petty_cash_combined_with_other_movements(self):
+        """All five inputs apply together: opening + sold − bought − comm + repl − petty."""
+        result = _compute_expected_cash_prod(
+            opening_cash=10_000.0,
+            total_sold=20_000.0,
+            total_bought=5_000.0,
+            total_commission=200.0,
+            total_replenishment=1_000.0,
+            total_petty_cash=300.0,
+        )
+        # 10000 + 20000 − 5000 − 200 + 1000 − 300 = 25500
+        assert result == pytest.approx(25_500.0)
+
 
 # ─── Variance ─────────────────────────────────────────────────────────────────
 

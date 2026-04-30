@@ -50,4 +50,6 @@ class ShiftOut(BaseModel):
     total_commission: Optional[float] = None
     # replenishments
     total_replenishment_php: Optional[float] = None
+    # petty cash spent from the till this shift (PENDING + APPROVED expenses)
+    total_petty_cash_php: Optional[float] = None
     replenishments: Optional[List[ReplenishmentOut]] = None
