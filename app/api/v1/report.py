@@ -4,6 +4,7 @@ from datetime import date as date_type, datetime, timedelta
 from typing import Optional
 
 from app.core.database import get_db
+from app.core.today import get_today
 from app.models.transaction import Transaction, PaymentStatus, PaymentMode
 from app.models.currency import Currency, DailyPosition
 from app.models.user import User
@@ -24,7 +25,7 @@ async def get_daily_report(
     Replaces the 6 manual books (BUY/SELL × MAIN/2ND/OTHERS)
     plus the CASHIER and BREAKDOWN sheets.
     """
-    target = report_date or date_type.today()
+    target = report_date or get_today()
 
     demo_users = db.query(User.username).filter(User.is_demo == True).scalar_subquery()
     txns = (
