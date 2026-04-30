@@ -55,7 +55,7 @@ async def get_today_positions(
 @router.post("/today")
 async def set_today_positions(
     payload: List[PositionIn],
-    current_user: TokenData = Depends(require_role("admin")),
+    current_user: TokenData = Depends(require_role("admin", "supervisor")),
     db: Session = Depends(get_db),
 ):
     """Upsert opening positions for today (first-day setup or manual override)."""
