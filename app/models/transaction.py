@@ -1,5 +1,6 @@
 from sqlalchemy import Column, String, Float, Date, DateTime, Enum, ForeignKey, Integer
 from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 import uuid
 import enum
@@ -68,6 +69,36 @@ class Transaction(Base):
     branch_id      = Column(String(20), nullable=True)        # branch code e.g. "MAIN", "CTS"
     customer_id    = Column(UUID(as_uuid=True), ForeignKey("customers.id"), nullable=True, index=True)
     created_at     = Column(DateTime(timezone=True), server_default=func.now())
+
+    payments = relationship(
+        "TxnPayment",
+        back_populates="transaction",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+    )
+
+
+class TxnPayment(Base):
+    """
+    One slice of a transaction's payment. A transaction may be paid via several
+    methods (e.g. ₱200k cash + ₱800k GCash) — each slice carries its own status,
+    so PENDING/RECEIVED is per-slice, not per-txn. SUM(amount_php) per txn must
+    equal transactions.php_amt (enforced in app layer, not DB).
+    """
+    __tablename__ = "txn_payments"
+
+    id           = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    txn_id       = Column(String(20), ForeignKey("transactions.id", ondelete="CASCADE"),
+                          nullable=False, index=True)
+    method       = Column(Enum(PaymentMode), nullable=False)
+    amount_php   = Column(Float, nullable=False)
+    status       = Column(Enum(PaymentStatus), default=PaymentStatus.RECEIVED, nullable=False, index=True)
+    reference_no = Column(String(60), nullable=True)
+    received_at  = Column(DateTime(timezone=True), nullable=True)
+    confirmed_by = Column(String(50), nullable=True)
+    created_at   = Column(DateTime(timezone=True), server_default=func.now())
+
+    transaction  = relationship("Transaction", back_populates="payments")
 
 
 class DispatchStatus(str, enum.Enum):
