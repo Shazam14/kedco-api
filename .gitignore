@@ -8,3 +8,9 @@ venv/
 dist/
 .DS_Store
 mock_date.txt
+
+# local dev artifacts — never committed
+*.db
+*.sqlite
+*.sqlite3
+scripts/seed_apple_credit.py
