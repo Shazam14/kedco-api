@@ -1,11 +1,12 @@
-from fastapi import APIRouter, Depends
+from typing import Optional
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
 from pydantic import BaseModel
 from datetime import date
 
 from app.core.database import get_db
-from app.models.shift import TreasurerFloat
+from app.models.shift import TreasurerFloat, TellerShift, ShiftStatus
 from app.models.user import User
 from app.api.v1.auth import require_role, TokenData
 from app.core.today import get_today
@@ -98,6 +99,7 @@ async def list_cashier_floats(
 
 @router.get("/pending-float")
 async def get_pending_float(
+    terminal_id: Optional[str] = Query(None),
     current_user: TokenData = Depends(require_role("admin", "cashier", "supervisor")),
     db: Session = Depends(get_db),
 ):
@@ -109,14 +111,35 @@ async def get_pending_float(
         )
     ).first()
 
-    if not record:
-        return None
+    if record:
+        treasurer = db.query(User).filter(User.username == record.treasurer_username).first()
+        treasurer_name = (treasurer.full_name or record.treasurer_username) if treasurer else record.treasurer_username
+        return {
+            "amount_php": record.amount_php,
+            "treasurer_username": record.treasurer_username,
+            "treasurer_name": treasurer_name,
+            "source": "treasurer",
+        }
 
-    treasurer = db.query(User).filter(User.username == record.treasurer_username).first()
-    treasurer_name = (treasurer.full_name or record.treasurer_username) if treasurer else record.treasurer_username
+    # Fallback: look for the last closed shift today on the same terminal
+    if terminal_id:
+        prev = (
+            db.query(TellerShift)
+            .filter(
+                TellerShift.date == today,
+                TellerShift.terminal_id == terminal_id,
+                TellerShift.status == ShiftStatus.CLOSED,
+            )
+            .order_by(TellerShift.closed_at.desc())
+            .first()
+        )
+        if prev:
+            amount = prev.closing_cash_php if prev.closing_cash_php is not None else prev.expected_cash_php
+            if amount is not None:
+                return {
+                    "amount_php": amount,
+                    "source": "handoff",
+                    "cashier_name": prev.cashier_name,
+                }
 
-    return {
-        "amount_php": record.amount_php,
-        "treasurer_username": record.treasurer_username,
-        "treasurer_name": treasurer_name,
-    }
+    return None
