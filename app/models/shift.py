@@ -46,8 +46,25 @@ class CashReplenishment(Base):
     shift_id   = Column(UUID(as_uuid=True), ForeignKey("teller_shifts.id", ondelete="CASCADE"), nullable=False, index=True)
     amount_php = Column(Float, nullable=False)
     note       = Column(String(300), nullable=True)
+    # Where the cash came from. SAFE → also writes a paired safe_movement(-amount).
+    source     = Column(String(20), nullable=False, server_default="TREASURER_FLOAT")
     added_at   = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     shift      = relationship("TellerShift", back_populates="replenishments")
+
+
+class SafeMovement(Base):
+    """Single shared PHP vault. Signed amount: + deposit, - withdrawal."""
+    __tablename__ = "safe_movements"
+
+    id                       = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    amount_php               = Column(Float, nullable=False)
+    reason                   = Column(String(40), nullable=False)
+    note                     = Column(String(300), nullable=True)
+    actor_username           = Column(String(50), nullable=False)
+    related_replenishment_id = Column(UUID(as_uuid=True), ForeignKey("cash_replenishments.id", ondelete="SET NULL"), nullable=True)
+    related_dispatch_id      = Column(UUID(as_uuid=True), ForeignKey("rider_dispatches.id",     ondelete="SET NULL"), nullable=True)
+    movement_date            = Column(Date, nullable=False, index=True)
+    created_at               = Column(DateTime(timezone=True), server_default=func.now())
 
 
 class TreasurerFloat(Base):

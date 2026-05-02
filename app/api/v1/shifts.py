@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 from datetime import datetime, date
 
 from app.core.database import get_db
-from app.models.shift import TellerShift, ShiftStatus, CashReplenishment
+from app.models.shift import TellerShift, ShiftStatus, CashReplenishment, SafeMovement
 from app.models.transaction import Transaction, PaymentStatus
 from app.models.expense import Expense, ExpenseStatus
 from app.models.user import User
@@ -70,7 +70,7 @@ def _shift_to_out(shift: TellerShift, db: Session) -> ShiftOut:
         total_replenishment_php=round(total_replenishment, 2),
         total_petty_cash_php=round(total_petty_cash, 2),
         replenishments=[
-            ReplenishmentOut(id=str(r.id), amount_php=r.amount_php, note=r.note, added_at=r.added_at)
+            ReplenishmentOut(id=str(r.id), amount_php=r.amount_php, note=r.note, source=r.source, added_at=r.added_at)
             for r in shift.replenishments
         ],
     )
@@ -131,12 +131,29 @@ async def replenish_cash(
     if not shift:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No open shift found for today.")
 
+    source = (body.source or "TREASURER_FLOAT").upper()
+    if source not in {"TREASURER_FLOAT", "SAFE", "EXTERNAL", "OTHER"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid source: {source}")
+
     replenishment = CashReplenishment(
         shift_id=shift.id,
         amount_php=body.amount_php,
         note=body.note,
+        source=source,
     )
     db.add(replenishment)
+    db.flush()  # need replenishment.id for the paired safe movement
+
+    if source == "SAFE":
+        db.add(SafeMovement(
+            amount_php=-abs(body.amount_php),
+            reason="REPLENISH_DRAWER",
+            note=body.note,
+            actor_username=current_user.username,
+            related_replenishment_id=replenishment.id,
+            movement_date=today,
+        ))
+
     db.commit()
     db.refresh(shift)
 

@@ -9,6 +9,7 @@ from app.models.transaction import Transaction, PaymentStatus, PaymentMode
 from app.models.currency import Currency, DailyPosition
 from app.models.user import User
 from app.models.credit import SpecialCredit, CreditInstallment, CreditStatus
+from app.models.shift import SafeMovement
 from app.api.v1.auth import require_role, TokenData
 
 router = APIRouter(prefix="/report", tags=["report"])
@@ -298,6 +299,26 @@ async def get_daily_report(
     # Interest income: from UPFRONT credits disbursed today + interest portion of fully paid INSTALLMENT credits
     interest_income_today  = round(sum(c.interest for c in credits_today if c.credit_type.value == "UPFRONT"), 2)
 
+    # ── Safe movements (PHP vault, signed amounts) ───────────────────────────
+    safe_rows = (
+        db.query(SafeMovement)
+        .filter(SafeMovement.movement_date == target)
+        .order_by(SafeMovement.created_at)
+        .all()
+    )
+    safe_movements = [
+        {
+            "id":             str(m.id),
+            "amount_php":     m.amount_php,
+            "reason":         m.reason,
+            "note":           m.note,
+            "actor_username": m.actor_username,
+            "created_at":     m.created_at.isoformat() if m.created_at else None,
+        }
+        for m in safe_rows
+    ]
+    safe_today_net = round(sum(m.amount_php for m in safe_rows), 2)
+
     return {
         "date":               str(target),
         "generated_at":       datetime.now().strftime("%I:%M %p"),
@@ -327,6 +348,10 @@ async def get_daily_report(
             "total_cash_out":      total_credit_cash_out,
             "total_cash_in":       total_credit_cash_in,
             "interest_income":     interest_income_today,
+        },
+        "safe": {
+            "movements": safe_movements,
+            "today_net": safe_today_net,
         },
         "transactions": [
             {

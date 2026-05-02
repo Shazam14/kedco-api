@@ -18,12 +18,15 @@ class ShiftCloseIn(BaseModel):
 class ReplenishIn(BaseModel):
     amount_php: float
     note: Optional[str] = None
+    # Where the cash came from. SAFE writes a paired safe_movement(-amount).
+    source: Optional[str] = "TREASURER_FLOAT"
 
 
 class ReplenishmentOut(BaseModel):
     id: str
     amount_php: float
     note: Optional[str] = None
+    source: Optional[str] = "TREASURER_FLOAT"
     added_at: datetime
 
 
