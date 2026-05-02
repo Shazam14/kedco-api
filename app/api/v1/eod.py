@@ -18,7 +18,7 @@ OPENING_CAPITAL = 0  # TODO: move to DB config — set by admin on first use
 
 @router.post("/close")
 async def close_day(
-    current_user: TokenData = Depends(require_role("admin")),
+    current_user: TokenData = Depends(require_role("admin", "supervisor")),
     db: Session = Depends(get_db),
 ):
     """
