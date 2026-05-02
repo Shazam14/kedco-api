@@ -1,4 +1,5 @@
-from sqlalchemy import Column, String, Float, Date, DateTime, Enum
+from sqlalchemy import Column, String, Float, Date, DateTime, Enum, ForeignKey
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 import uuid
 import enum
@@ -35,6 +36,8 @@ class Expense(Base):
     description = Column(String(200), nullable=True)
     referrer    = Column(String(100), nullable=True)
     recorded_by = Column(String(50), nullable=False)
+    # Stamped at create time so cashier views can scope to the current OPEN shift.
+    shift_id    = Column(UUID(as_uuid=True), ForeignKey("teller_shifts.id", ondelete="SET NULL"), nullable=True, index=True)
     status      = Column(Enum(ExpenseStatus), default=ExpenseStatus.PENDING, nullable=False)
     approved_by = Column(String(50), nullable=True)
     approved_at = Column(DateTime(timezone=True), nullable=True)
