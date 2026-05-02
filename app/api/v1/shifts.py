@@ -1,16 +1,17 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from datetime import datetime, date
 
 from app.core.database import get_db
 from app.models.shift import TellerShift, ShiftStatus, CashReplenishment, SafeMovement
-from app.models.transaction import Transaction, PaymentStatus
+from app.models.transaction import Transaction, PaymentStatus, RiderDispatch, DispatchStatus
 from app.models.expense import Expense, ExpenseStatus
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.schemas.shift import ShiftOpenIn, ShiftCloseIn, ReplenishIn, ShiftOut, ReplenishmentOut
 from app.api.v1.auth import require_role, TokenData
 from app.core.today import get_today
-from app.services.shifts import compute_expected_cash, compute_variance
+from app.services.shifts import compute_expected_cash, compute_variance, compute_expected_cash_treasurer
 
 router = APIRouter(prefix="/shifts", tags=["shifts"])
 
@@ -20,6 +21,67 @@ def _comm(t):
         return 0.0
     return (t.rate - t.official_rate) * t.foreign_amt if str(t.type) == "SELL" \
         else (t.official_rate - t.rate) * t.foreign_amt
+
+
+def _treasurer_aggregates(shift: TellerShift, db: Session) -> dict | None:
+    """Return treasurer-side roll-ups when this shift is owned by a supervisor.
+    Cashier shifts return None — keeps the cashier ShiftOut payload unchanged.
+    """
+    owner = db.query(User).filter_by(username=shift.cashier).first()
+    if not owner or owner.role != UserRole.supervisor:
+        return None
+
+    window_end = shift.closed_at or datetime.now()
+
+    demo_users = db.query(User.username).filter(User.is_demo == True).scalar_subquery()
+
+    received = lambda t: t.payment_status != PaymentStatus.PENDING
+
+    overall_txns = (
+        db.query(Transaction)
+        .filter(Transaction.date == shift.date)
+        .filter(~Transaction.cashier.in_(demo_users))
+        .all()
+    )
+    overall_bought = sum(t.php_amt for t in overall_txns if t.type == "BUY"  and received(t))
+    overall_sold   = sum(t.php_amt for t in overall_txns if t.type == "SELL" and received(t))
+
+    # Rider returns confirmed during her shift window. REMITTED|RETURNED both
+    # mean the cash physically came back; we use updated_at as the proxy for
+    # when the status flip happened.
+    dispatches = (
+        db.query(RiderDispatch)
+        .filter(RiderDispatch.date == shift.date)
+        .filter(RiderDispatch.status.in_([DispatchStatus.REMITTED, DispatchStatus.RETURNED]))
+        .filter(RiderDispatch.updated_at >= shift.opened_at)
+        .filter(RiderDispatch.updated_at <= window_end)
+        .all()
+    )
+    from_dispatches = sum(d.remit_php or 0 for d in dispatches)
+
+    # Cashier shifts that closed during her window — their closing cash was
+    # physically handed back to the treasurer (best-effort: doesn't account for
+    # same-terminal handoffs to the next cashier).
+    cashier_closes = (
+        db.query(TellerShift)
+        .filter(TellerShift.date == shift.date)
+        .filter(TellerShift.id != shift.id)
+        .filter(TellerShift.status == ShiftStatus.CLOSED)
+        .filter(TellerShift.closed_at >= shift.opened_at)
+        .filter(TellerShift.closed_at <= window_end)
+        .all()
+    )
+    from_cashier = sum(s.closing_cash_php or 0 for s in cashier_closes)
+
+    bale_peso = sum(r.amount_php for r in shift.replenishments if r.source == "SAFE")
+
+    return {
+        "overall_total_bought_php": round(overall_bought, 2),
+        "overall_total_sold_php":   round(overall_sold, 2),
+        "from_dispatches_php":      round(from_dispatches, 2),
+        "from_cashier_php":         round(from_cashier, 2),
+        "bale_peso_php":            round(bale_peso, 2),
+    }
 
 
 def _shift_to_out(shift: TellerShift, db: Session) -> ShiftOut:
@@ -45,6 +107,8 @@ def _shift_to_out(shift: TellerShift, db: Session) -> ShiftOut:
         Expense.status != ExpenseStatus.REJECTED,
     ).all()
     total_petty_cash = sum(e.amount_php for e in petty_cash_rows)
+
+    treasurer_view = _treasurer_aggregates(shift, db)
 
     return ShiftOut(
         id=str(shift.id),
@@ -72,6 +136,12 @@ def _shift_to_out(shift: TellerShift, db: Session) -> ShiftOut:
             ReplenishmentOut(id=str(r.id), amount_php=r.amount_php, note=r.note, source=r.source, added_at=r.added_at)
             for r in shift.replenishments
         ],
+        is_treasurer_shift=treasurer_view is not None,
+        overall_total_bought_php=treasurer_view["overall_total_bought_php"] if treasurer_view else None,
+        overall_total_sold_php=treasurer_view["overall_total_sold_php"]     if treasurer_view else None,
+        from_dispatches_php=treasurer_view["from_dispatches_php"]           if treasurer_view else None,
+        from_cashier_php=treasurer_view["from_cashier_php"]                 if treasurer_view else None,
+        bale_peso_php=treasurer_view["bale_peso_php"]                       if treasurer_view else None,
     )
 
 
@@ -194,12 +264,24 @@ async def close_shift(
     ).all()
     total_petty_cash = sum(e.amount_php for e in petty_cash_rows)
 
-    expected = compute_expected_cash(
-        shift.opening_cash_php,
-        total_sold, total_bought, total_commission, total_replenishment,
-        total_petty_cash,
-    )
-    variance = compute_variance(body.closing_cash_php, expected)
+    treasurer_view = _treasurer_aggregates(shift, db)
+    if treasurer_view is not None:
+        # Treasurer drawer: opening + dispatches returned + cashier handoffs.
+        # BALE PESO is physically in the drawer but accounted as a vault liability,
+        # so variance compares actual against (expected + bale).
+        expected = compute_expected_cash_treasurer(
+            shift.opening_cash_php,
+            treasurer_view["from_dispatches_php"],
+            treasurer_view["from_cashier_php"],
+        )
+        variance = compute_variance(body.closing_cash_php, expected + treasurer_view["bale_peso_php"])
+    else:
+        expected = compute_expected_cash(
+            shift.opening_cash_php,
+            total_sold, total_bought, total_commission, total_replenishment,
+            total_petty_cash,
+        )
+        variance = compute_variance(body.closing_cash_php, expected)
 
     shift.status            = ShiftStatus.CLOSED
     shift.closed_at         = datetime.now()

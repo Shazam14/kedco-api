@@ -56,3 +56,11 @@ class ShiftOut(BaseModel):
     # petty cash spent from the till this shift (PENDING + APPROVED expenses)
     total_petty_cash_php: Optional[float] = None
     replenishments: Optional[List[ReplenishmentOut]] = None
+    # treasurer-shift aggregates — populated when the shift owner has role=supervisor.
+    # Cashier shifts get nulls; UI flips on `is_treasurer_shift`.
+    is_treasurer_shift: Optional[bool] = None
+    overall_total_bought_php: Optional[float] = None
+    overall_total_sold_php: Optional[float] = None
+    from_dispatches_php: Optional[float] = None
+    from_cashier_php: Optional[float] = None
+    bale_peso_php: Optional[float] = None
