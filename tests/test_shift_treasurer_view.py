@@ -58,6 +58,7 @@ def test_treasurer_shift_flips_treasurer_flag(client, db, supervisor_user):
     assert body["from_dispatches_php"] == 0
     assert body["from_cashier_php"] == 0
     assert body["bale_peso_php"] == 0
+    assert body["vault_returns_php"] == 0
 
 
 def test_overall_totals_sum_all_cashier_txns(client, db, supervisor_user, cashier_user, make_transaction):
@@ -158,14 +159,14 @@ def test_treasurer_close_uses_treasurer_formula(client, db, supervisor_user, cas
     db.add(CashReplenishment(id=uuid.uuid4(), shift_id=treasurer_shift_id, amount_php=200_000, source="SAFE"))
     db.commit()
 
-    # Expected (treasurer formula) = 100k + 50k + 75k = 225k. Bale = 200k.
-    # Treasurer should physically hold 425k. Variance = actual − (expected + bale).
+    # Expected (treasurer formula) = 100k + 50k + 75k − 200k bale = 25k.
+    # Bale is a vault liability; treasurer keeps it segregated from her own-money tally.
     res = client.post(
         "/api/v1/shifts/close",
         headers=auth_header(supervisor_user.username, "supervisor"),
-        json={"closing_cash_php": 425_000},
+        json={"closing_cash_php": 25_000},
     )
     assert res.status_code == 200, res.text
     body = res.json()
-    assert body["expected_cash_php"] == 225_000
+    assert body["expected_cash_php"] == 25_000
     assert body["cash_variance"]     == 0

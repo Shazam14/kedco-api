@@ -33,16 +33,17 @@ def compute_expected_cash_treasurer(
     opening_cash: float,
     from_dispatches: float = 0.0,
     from_cashier: float = 0.0,
+    bale_peso: float = 0.0,
+    vault_returns: float = 0.0,
 ) -> float:
     """
-    Treasurer's drawer doesn't transact (or rarely does — those go through cashier formula
-    when role=cashier). Her cash flows are returns from the field.
+    Opening + dispatches + cashier handoffs − bale peso + vault returns.
 
-    Opening (treasurer's own float)
-    + FROM DISPATCHES (rider remit_php returned during her shift)
-    + FROM CASHIER    (cashier closing_cash handed back during her shift)
-
-    BALE PESO is the vault loan she's holding — physically present in drawer but
-    accounted as a liability separately (variance = actual − (expected + bale)).
+    BALE PESO is segregated as vault accountability (subtracts).
+    VAULT RETURNS are drawer-to-vault deposits she made during shift —
+    they cancel prior bale liability, so they add back to expected own-money.
     """
-    return round(opening_cash + from_dispatches + from_cashier, 2)
+    return round(
+        opening_cash + from_dispatches + from_cashier - bale_peso + vault_returns,
+        2,
+    )

@@ -75,12 +75,27 @@ def _treasurer_aggregates(shift: TellerShift, db: Session) -> dict | None:
 
     bale_peso = sum(r.amount_php for r in shift.replenishments if r.source == "SAFE")
 
+    # Drawer-to-vault deposits (manual safe deposits) made by this treasurer
+    # during her shift window — these reduce her bale liability and her drawer.
+    vault_deposits = (
+        db.query(SafeMovement)
+        .filter(SafeMovement.movement_date == shift.date)
+        .filter(SafeMovement.actor_username == shift.cashier)
+        .filter(SafeMovement.amount_php > 0)
+        .filter(SafeMovement.reason == "MANUAL_DEPOSIT")
+        .filter(SafeMovement.created_at >= shift.opened_at)
+        .filter(SafeMovement.created_at <= window_end)
+        .all()
+    )
+    vault_returns = sum(m.amount_php for m in vault_deposits)
+
     return {
         "overall_total_bought_php": round(overall_bought, 2),
         "overall_total_sold_php":   round(overall_sold, 2),
         "from_dispatches_php":      round(from_dispatches, 2),
         "from_cashier_php":         round(from_cashier, 2),
         "bale_peso_php":            round(bale_peso, 2),
+        "vault_returns_php":        round(vault_returns, 2),
     }
 
 
@@ -142,6 +157,7 @@ def _shift_to_out(shift: TellerShift, db: Session) -> ShiftOut:
         from_dispatches_php=treasurer_view["from_dispatches_php"]           if treasurer_view else None,
         from_cashier_php=treasurer_view["from_cashier_php"]                 if treasurer_view else None,
         bale_peso_php=treasurer_view["bale_peso_php"]                       if treasurer_view else None,
+        vault_returns_php=treasurer_view["vault_returns_php"]               if treasurer_view else None,
     )
 
 
@@ -266,15 +282,14 @@ async def close_shift(
 
     treasurer_view = _treasurer_aggregates(shift, db)
     if treasurer_view is not None:
-        # Treasurer drawer: opening + dispatches returned + cashier handoffs.
-        # BALE PESO is physically in the drawer but accounted as a vault liability,
-        # so variance compares actual against (expected + bale).
         expected = compute_expected_cash_treasurer(
             shift.opening_cash_php,
             treasurer_view["from_dispatches_php"],
             treasurer_view["from_cashier_php"],
+            treasurer_view["bale_peso_php"],
+            treasurer_view["vault_returns_php"],
         )
-        variance = compute_variance(body.closing_cash_php, expected + treasurer_view["bale_peso_php"])
+        variance = compute_variance(body.closing_cash_php, expected)
     else:
         expected = compute_expected_cash(
             shift.opening_cash_php,

@@ -64,3 +64,4 @@ class ShiftOut(BaseModel):
     from_dispatches_php: Optional[float] = None
     from_cashier_php: Optional[float] = None
     bale_peso_php: Optional[float] = None
+    vault_returns_php: Optional[float] = None

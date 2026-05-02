@@ -334,6 +334,9 @@ def submit_remit(
     if not dispatch:
         raise HTTPException(404, "Active dispatch not found")
 
+    if data.cash_php_remaining < 0:
+        raise HTTPException(400, "cash_php_remaining cannot be negative — remit is the physical PHP handed back")
+
     dispatch.status   = DispatchStatus.REMITTED
     dispatch.remit_php = data.cash_php_remaining
     dispatch.return_time = datetime.now().strftime("%I:%M %p")
