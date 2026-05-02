@@ -56,6 +56,7 @@ def test_treasurer_shift_flips_treasurer_flag(client, db, supervisor_user):
     assert body["is_treasurer_shift"] is True
     assert body["overall_total_bought_php"] == 0
     assert body["from_dispatches_php"] == 0
+    assert body["dispatches_out_php"] == 0
     assert body["from_cashier_php"] == 0
     assert body["bale_peso_php"] == 0
     assert body["vault_returns_php"] == 0
@@ -98,6 +99,64 @@ def test_from_dispatches_sums_only_in_window_remits(client, db, supervisor_user,
     res = client.get("/api/v1/shifts/active", headers=auth_header(supervisor_user.username, "supervisor"))
     body = res.json()
     assert body["from_dispatches_php"] == 80_000
+
+
+def test_dispatches_out_counts_only_own_dispatches(client, db, supervisor_user, rider_user):
+    """Treasurer's expected drawer subtracts cash she dispatched. Dispatches by
+    other treasurers (different `dispatched_by`) belong to their drawer math."""
+    _open_shift(db, cashier=supervisor_user.username)
+
+    def _add_dispatch(amount: float, by: str) -> None:
+        db.add(RiderDispatch(
+            id=uuid.uuid4(),
+            date=get_today(),
+            rider_username=rider_user.username,
+            rider_name=rider_user.full_name,
+            status=DispatchStatus.IN_FIELD,
+            dispatch_time="09:00 AM",
+            cash_php=amount,
+            dispatched_by=by,
+        ))
+        db.commit()
+
+    # Two dispatches by this treasurer — count.
+    _add_dispatch(300_000, supervisor_user.username)
+    _add_dispatch(150_000, supervisor_user.username)
+    # One dispatched by someone else — doesn't count toward her drawer.
+    _add_dispatch(999_999, "some_other_treasurer")
+
+    res = client.get("/api/v1/shifts/active", headers=auth_header(supervisor_user.username, "supervisor"))
+    body = res.json()
+    assert body["dispatches_out_php"] == 450_000
+
+
+def test_from_cashier_excludes_same_terminal_handoffs(client, db, supervisor_user, cashier_user):
+    """When cashier1 closes and cashier2 opens on the same terminal, cashier1's
+    closing was a handoff — not a return to treasurer. Only the LAST shift per
+    terminal counts."""
+    shift_open = datetime.now() - timedelta(hours=4)
+    _open_shift(db, cashier=supervisor_user.username, opened_at=shift_open)
+
+    # cashier1: opened first, closed early on Counter 1 → handed off to cashier2
+    cs1 = _open_shift(db, cashier=cashier_user.username, opening=10_000,
+                      opened_at=shift_open + timedelta(minutes=5))
+    cs1.terminal_id = "Counter 1"
+    db.commit()
+    _close_shift(db, cs1, closing=292_832,
+                 closed_at=shift_open + timedelta(hours=1))
+
+    # cashier2: opened on same terminal AFTER cashier1 closed (the handoff)
+    cs2 = _open_shift(db, cashier="cashier2", opening=292_832,
+                      opened_at=shift_open + timedelta(hours=1, minutes=1))
+    cs2.terminal_id = "Counter 1"
+    db.commit()
+    _close_shift(db, cs2, closing=37_748,
+                 closed_at=datetime.now() - timedelta(minutes=10))
+
+    res = client.get("/api/v1/shifts/active", headers=auth_header(supervisor_user.username, "supervisor"))
+    body = res.json()
+    # Only cashier2's 37,748 returned to treasurer; cs1's 292,832 was a handoff.
+    assert body["from_cashier_php"] == 37_748
 
 
 def test_from_cashier_sums_other_cashier_closes_in_window(client, db, supervisor_user, cashier_user):

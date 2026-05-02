@@ -46,9 +46,10 @@ def _treasurer_aggregates(shift: TellerShift, db: Session) -> dict | None:
     overall_bought = sum(t.php_amt for t in overall_txns if t.type == "BUY"  and received(t))
     overall_sold   = sum(t.php_amt for t in overall_txns if t.type == "SELL" and received(t))
 
-    # Rider returns confirmed during her shift window. REMITTED|RETURNED both
-    # mean the cash physically came back; we use updated_at as the proxy for
-    # when the status flip happened.
+    # Rider returns physically reaching the treasurer's drawer during her window.
+    # `from_dispatches` = remits in (positive cash flow into drawer).
+    # `dispatches_out` = cash she handed out at dispatch time (negative flow).
+    # Net dispatch impact = from_dispatches − dispatches_out.
     dispatches = (
         db.query(RiderDispatch)
         .filter(RiderDispatch.date == shift.date)
@@ -59,10 +60,21 @@ def _treasurer_aggregates(shift: TellerShift, db: Session) -> dict | None:
     )
     from_dispatches = sum(d.remit_php or 0 for d in dispatches)
 
-    # Cashier shifts that closed during her window — their closing cash was
-    # physically handed back to the treasurer (best-effort: doesn't account for
-    # same-terminal handoffs to the next cashier).
-    cashier_closes = (
+    # Cash she dispatched (cash_php is cumulative, includes any topups).
+    # Filter to dispatches initiated by this treasurer — others' dispatches
+    # already affected a previous treasurer's drawer.
+    own_dispatches = (
+        db.query(RiderDispatch)
+        .filter(RiderDispatch.date == shift.date)
+        .filter(RiderDispatch.dispatched_by == shift.cashier)
+        .all()
+    )
+    dispatches_out = sum(d.cash_php or 0 for d in own_dispatches)
+
+    # Cashier shifts whose closing cash physically reached the treasurer.
+    # A shift that handed off to a later shift on the same terminal didn't —
+    # only count the LAST shift per terminal (no later shift on that terminal).
+    candidate_closes = (
         db.query(TellerShift)
         .filter(TellerShift.date == shift.date)
         .filter(TellerShift.id != shift.id)
@@ -71,6 +83,19 @@ def _treasurer_aggregates(shift: TellerShift, db: Session) -> dict | None:
         .filter(TellerShift.closed_at <= window_end)
         .all()
     )
+    cashier_closes = []
+    for cs in candidate_closes:
+        later_on_same_terminal = (
+            db.query(TellerShift)
+            .filter(TellerShift.id != cs.id)
+            .filter(TellerShift.id != shift.id)
+            .filter(TellerShift.date == cs.date)
+            .filter(TellerShift.terminal_id == cs.terminal_id)
+            .filter(TellerShift.opened_at > cs.opened_at)
+            .first()
+        )
+        if later_on_same_terminal is None:
+            cashier_closes.append(cs)
     from_cashier = sum(s.closing_cash_php or 0 for s in cashier_closes)
 
     bale_peso = sum(r.amount_php for r in shift.replenishments if r.source == "SAFE")
@@ -93,6 +118,7 @@ def _treasurer_aggregates(shift: TellerShift, db: Session) -> dict | None:
         "overall_total_bought_php": round(overall_bought, 2),
         "overall_total_sold_php":   round(overall_sold, 2),
         "from_dispatches_php":      round(from_dispatches, 2),
+        "dispatches_out_php":       round(dispatches_out, 2),
         "from_cashier_php":         round(from_cashier, 2),
         "bale_peso_php":            round(bale_peso, 2),
         "vault_returns_php":        round(vault_returns, 2),
@@ -155,6 +181,7 @@ def _shift_to_out(shift: TellerShift, db: Session) -> ShiftOut:
         overall_total_bought_php=treasurer_view["overall_total_bought_php"] if treasurer_view else None,
         overall_total_sold_php=treasurer_view["overall_total_sold_php"]     if treasurer_view else None,
         from_dispatches_php=treasurer_view["from_dispatches_php"]           if treasurer_view else None,
+        dispatches_out_php=treasurer_view["dispatches_out_php"]             if treasurer_view else None,
         from_cashier_php=treasurer_view["from_cashier_php"]                 if treasurer_view else None,
         bale_peso_php=treasurer_view["bale_peso_php"]                       if treasurer_view else None,
         vault_returns_php=treasurer_view["vault_returns_php"]               if treasurer_view else None,
@@ -285,6 +312,7 @@ async def close_shift(
         expected = compute_expected_cash_treasurer(
             shift.opening_cash_php,
             treasurer_view["from_dispatches_php"],
+            treasurer_view["dispatches_out_php"],
             treasurer_view["from_cashier_php"],
             treasurer_view["bale_peso_php"],
             treasurer_view["vault_returns_php"],

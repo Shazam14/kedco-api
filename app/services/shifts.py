@@ -32,18 +32,26 @@ def compute_variance(closing_cash: float, expected_cash: float) -> float:
 def compute_expected_cash_treasurer(
     opening_cash: float,
     from_dispatches: float = 0.0,
+    dispatches_out: float = 0.0,
     from_cashier: float = 0.0,
     bale_peso: float = 0.0,
     vault_returns: float = 0.0,
 ) -> float:
     """
-    Opening + dispatches + cashier handoffs − bale peso + vault returns.
+    Opening + (remits in − dispatched out) + cashier handoffs − bale + vault returns.
+
+    Both legs of the dispatch flow are accounted for:
+      − dispatches_out: cash she handed to riders earlier
+      + from_dispatches: physical cash riders returned at remit
 
     BALE PESO is segregated as vault accountability (subtracts).
-    VAULT RETURNS are drawer-to-vault deposits she made during shift —
-    they cancel prior bale liability, so they add back to expected own-money.
+    VAULT RETURNS are drawer-to-vault deposits during shift — they cancel prior
+    bale liability, so they add back to expected own-money.
     """
     return round(
-        opening_cash + from_dispatches + from_cashier - bale_peso + vault_returns,
+        opening_cash
+        + from_dispatches - dispatches_out
+        + from_cashier
+        - bale_peso + vault_returns,
         2,
     )
