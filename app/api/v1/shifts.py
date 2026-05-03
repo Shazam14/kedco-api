@@ -33,6 +33,14 @@ def _treasurer_aggregates(shift: TellerShift, db: Session) -> dict | None:
 
     window_end = shift.closed_at or datetime.now()
 
+    # When the date override is active, `shift.date` (operational) and
+    # `shift.opened_at.date()` (physical wall-clock) diverge — operational
+    # entries can have wall-clock timestamps that predate the shift's physical
+    # opened_at. In that case, drop the wall-clock lower bound and scope by
+    # operational date alone. Otherwise, preserve normal multi-shift scoping.
+    override_active = shift.date != shift.opened_at.date()
+    window_start = None if override_active else shift.opened_at
+
     demo_users = db.query(User.username).filter(User.is_demo == True).scalar_subquery()
 
     received = lambda t: t.payment_status != PaymentStatus.PENDING
@@ -50,14 +58,15 @@ def _treasurer_aggregates(shift: TellerShift, db: Session) -> dict | None:
     # `from_dispatches` = remits in (positive cash flow into drawer).
     # `dispatches_out` = cash she handed out at dispatch time (negative flow).
     # Net dispatch impact = from_dispatches − dispatches_out.
-    dispatches = (
+    dispatches_q = (
         db.query(RiderDispatch)
         .filter(RiderDispatch.date == shift.date)
         .filter(RiderDispatch.status.in_([DispatchStatus.REMITTED, DispatchStatus.RETURNED]))
-        .filter(RiderDispatch.updated_at >= shift.opened_at)
         .filter(RiderDispatch.updated_at <= window_end)
-        .all()
     )
+    if window_start is not None:
+        dispatches_q = dispatches_q.filter(RiderDispatch.updated_at >= window_start)
+    dispatches = dispatches_q.all()
     from_dispatches = sum(d.remit_php or 0 for d in dispatches)
 
     # Cash she dispatched (cash_php is cumulative, includes any topups).
@@ -74,15 +83,16 @@ def _treasurer_aggregates(shift: TellerShift, db: Session) -> dict | None:
     # Cashier shifts whose closing cash physically reached the treasurer.
     # A shift that handed off to a later shift on the same terminal didn't —
     # only count the LAST shift per terminal (no later shift on that terminal).
-    candidate_closes = (
+    candidate_closes_q = (
         db.query(TellerShift)
         .filter(TellerShift.date == shift.date)
         .filter(TellerShift.id != shift.id)
         .filter(TellerShift.status == ShiftStatus.CLOSED)
-        .filter(TellerShift.closed_at >= shift.opened_at)
         .filter(TellerShift.closed_at <= window_end)
-        .all()
     )
+    if window_start is not None:
+        candidate_closes_q = candidate_closes_q.filter(TellerShift.closed_at >= window_start)
+    candidate_closes = candidate_closes_q.all()
     cashier_closes = []
     for cs in candidate_closes:
         later_on_same_terminal = (
@@ -102,16 +112,17 @@ def _treasurer_aggregates(shift: TellerShift, db: Session) -> dict | None:
 
     # Drawer-to-vault deposits (manual safe deposits) made by this treasurer
     # during her shift window — these reduce her bale liability and her drawer.
-    vault_deposits = (
+    vault_deposits_q = (
         db.query(SafeMovement)
         .filter(SafeMovement.movement_date == shift.date)
         .filter(SafeMovement.actor_username == shift.cashier)
         .filter(SafeMovement.amount_php > 0)
         .filter(SafeMovement.reason == "MANUAL_DEPOSIT")
-        .filter(SafeMovement.created_at >= shift.opened_at)
         .filter(SafeMovement.created_at <= window_end)
-        .all()
     )
+    if window_start is not None:
+        vault_deposits_q = vault_deposits_q.filter(SafeMovement.created_at >= window_start)
+    vault_deposits = vault_deposits_q.all()
     vault_returns = sum(m.amount_php for m in vault_deposits)
 
     return {

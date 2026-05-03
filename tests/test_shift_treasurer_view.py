@@ -4,10 +4,10 @@ Cashier shifts must see `is_treasurer_shift=False` and the new fields stay None
 (no behavior change). Supervisor shifts get overall totals + dispatches/handoffs/bale.
 """
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 
 from app.core.today import get_today
-from app.models.shift import TellerShift, ShiftStatus, CashReplenishment
+from app.models.shift import TellerShift, ShiftStatus, CashReplenishment, SafeMovement
 from app.models.transaction import RiderDispatch, DispatchStatus
 from tests.conftest import auth_header
 
@@ -76,14 +76,17 @@ def test_overall_totals_sum_all_cashier_txns(client, db, supervisor_user, cashie
 
 
 def test_from_dispatches_sums_only_in_window_remits(client, db, supervisor_user, make_dispatch):
-    shift_open = datetime.now() - timedelta(hours=2)
+    # Anchor wall-clock timestamps to the operational date so override is OFF
+    # and the wall-clock window filter is what's exercised here.
+    op_today = get_today()
+    shift_open = datetime.combine(op_today, time(10, 0))
     _open_shift(db, cashier=supervisor_user.username, opened_at=shift_open)
 
     # In-window REMITTED dispatch counts.
     d1 = make_dispatch(cash_php=100_000)
     d1.remit_php = 80_000
     d1.status = DispatchStatus.REMITTED
-    d1.updated_at = datetime.now() - timedelta(minutes=30)
+    d1.updated_at = datetime.combine(op_today, time(11, 0))
     db.commit()
 
     # Pre-window dispatch (closed BEFORE shift opened) — should NOT count.
@@ -191,6 +194,38 @@ def test_bale_peso_only_safe_sourced_replenishments(client, db, supervisor_user)
     assert body["bale_peso_php"] == 500_000
     # All replenishments still counted in total_replenishment_php (unchanged).
     assert body["total_replenishment_php"] == 530_000
+
+
+def test_window_under_date_override_uses_operational_date(client, db, supervisor_user, make_dispatch):
+    """Date override: shift opened on a physical day after its operational date.
+    Movements timestamped (wall-clock) before opened_at but on the operational
+    date must still be counted — wall-clock window scoping would drop them."""
+    operational_date = get_today()
+    physical_open = datetime.now() + timedelta(days=8)  # simulates override: opened "later" in real time
+    _open_shift(db, cashier=supervisor_user.username, opened_at=physical_open)
+
+    # Vault deposit made on the operational date with a wall-clock created_at
+    # that predates physical_open by ~8 days.
+    db.add(SafeMovement(
+        id=uuid.uuid4(),
+        amount_php=1_000_000,
+        reason="MANUAL_DEPOSIT",
+        actor_username=supervisor_user.username,
+        movement_date=operational_date,
+        created_at=datetime.now() - timedelta(hours=1),
+    ))
+
+    # Rider remit on the same operational date, also pre-physical_open.
+    d = make_dispatch(cash_php=200_000)
+    d.remit_php = 150_000
+    d.status = DispatchStatus.REMITTED
+    d.updated_at = datetime.now() - timedelta(hours=1)
+    db.commit()
+
+    res = client.get("/api/v1/shifts/active", headers=auth_header(supervisor_user.username, "supervisor"))
+    body = res.json()
+    assert body["vault_returns_php"]   == 1_000_000
+    assert body["from_dispatches_php"] == 150_000
 
 
 def test_treasurer_close_uses_treasurer_formula(client, db, supervisor_user, cashier_user, make_dispatch):
