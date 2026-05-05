@@ -8,3 +8,4 @@ from app.models.credit import SpecialCredit, CreditInstallment
 from app.models.passbook import PassbookEntry
 from app.models.expense import Expense
 from app.models.capital import PhpCapitalEntry
+from app.models.investor import Investor

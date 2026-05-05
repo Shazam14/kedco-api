@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from app.api.v1 import auth, dashboard, rates, transactions, currencies, eod, positions, users, report, banks, rider, shifts, credits, passbook, audit, edit_requests, config, expenses, treasurer, customers, safe, capital
+from app.api.v1 import auth, dashboard, rates, transactions, currencies, eod, positions, users, report, banks, rider, shifts, credits, passbook, audit, edit_requests, config, expenses, treasurer, customers, safe, capital, investors
 
 router = APIRouter(prefix="/api/v1")
 router.include_router(auth.router)
@@ -25,3 +25,4 @@ router.include_router(customers.router)
 router.include_router(customers.admin_router)
 router.include_router(safe.router)
 router.include_router(capital.router)
+router.include_router(investors.router)
