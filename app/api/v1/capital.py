@@ -291,3 +291,50 @@ async def delete_branch_capital(
         raise HTTPException(status_code=404, detail="Branch capital row not found.")
     db.delete(row)
     db.commit()
+
+
+# ── Peso Ken (Ken's personal float, signed ledger) ────────────────────
+
+
+def _peso_ken_to_out(e: PesoKenEntry) -> CapitalEntryOut:
+    return CapitalEntryOut(
+        id=str(e.id), amount_php=e.amount_php, note=e.note,
+        entry_date=e.entry_date, created_by=e.created_by, created_at=e.created_at,
+    )
+
+
+@router.get("/peso-ken", response_model=CapitalLedgerOut)
+async def get_peso_ken(
+    current_user: TokenData = Depends(require_role("admin")),
+    db: Session = Depends(get_db),
+):
+    entries = (
+        db.query(PesoKenEntry)
+        .order_by(PesoKenEntry.entry_date.desc(), PesoKenEntry.created_at.desc())
+        .all()
+    )
+    running_total = round(sum(e.amount_php for e in entries), 2)
+    return CapitalLedgerOut(
+        running_total=running_total,
+        entries=[_peso_ken_to_out(e) for e in entries],
+    )
+
+
+@router.post("/peso-ken", response_model=CapitalEntryOut, status_code=status.HTTP_201_CREATED)
+async def add_peso_ken_entry(
+    payload: CapitalEntryIn,
+    current_user: TokenData = Depends(require_role("admin")),
+    db: Session = Depends(get_db),
+):
+    if payload.amount_php == 0:
+        raise HTTPException(status_code=400, detail="Amount cannot be zero.")
+    entry = PesoKenEntry(
+        amount_php=payload.amount_php,
+        note=payload.note,
+        entry_date=payload.entry_date or get_today(),
+        created_by=current_user.username,
+    )
+    db.add(entry)
+    db.commit()
+    db.refresh(entry)
+    return _peso_ken_to_out(entry)
