@@ -8,11 +8,18 @@ from app.core.database import get_db
 from app.core.today import get_today
 from app.models.capital import PhpCapitalEntry, BranchCapital, PesoKenEntry
 from app.models.currency import Currency, DailyPosition, DailyRate
+from app.models.shift import TellerShift, ShiftStatus
 from app.models.transaction import Transaction, TxnPayment, TxnType, PaymentMode, PaymentStatus
 from app.models.user import User
 from app.api.v1.auth import require_role, TokenData
+from app.api.v1.shifts import _treasurer_aggregates
+from app.services.shifts import compute_expected_cash_treasurer
 
 router = APIRouter(prefix="/capital", tags=["capital"])
+
+# Real treasurers per Ken (project_db_users.md). supervisor1/supervisor2 are
+# test accounts and excluded from reconciliation.
+TREASURER_USERNAMES = ("treasurer1", "treasurer2")
 
 
 class CapitalEntryIn(BaseModel):
@@ -338,3 +345,71 @@ async def add_peso_ken_entry(
     db.commit()
     db.refresh(entry)
     return _peso_ken_to_out(entry)
+
+
+# ── Peso Merly (treasurer1 + treasurer2 expected cash for date) ──────
+
+
+class TreasurerLine(BaseModel):
+    username:          str
+    full_name:         Optional[str]
+    shift_status:      Optional[str]      # OPEN / CLOSED / None (no shift today)
+    expected_cash_php: float
+
+
+class PesoMerlyOut(BaseModel):
+    date:       date_type
+    total_php:  float
+    lines:      list[TreasurerLine]
+
+
+@router.get("/peso-merly", response_model=PesoMerlyOut)
+async def get_peso_merly(
+    target_date: Optional[date_type] = Query(default=None, alias="date"),
+    current_user: TokenData = Depends(require_role("admin")),
+    db: Session = Depends(get_db),
+):
+    """
+    Peso Merly = sum of treasurer1 + treasurer2 expected cash on `date`.
+    Mirrors supervisor screen formula (compute_expected_cash_treasurer) so OPEN
+    shifts get live numbers and CLOSED shifts use the same path.
+    """
+    target = target_date or get_today()
+
+    lines: list[TreasurerLine] = []
+    total = 0.0
+    for username in TREASURER_USERNAMES:
+        user = db.query(User).filter(User.username == username).first()
+        # Most recent shift on target date (treasurer typically opens one per day).
+        shift = (
+            db.query(TellerShift)
+            .filter(TellerShift.cashier == username)
+            .filter(TellerShift.date == target)
+            .order_by(TellerShift.opened_at.desc())
+            .first()
+        )
+
+        expected = 0.0
+        shift_status: Optional[str] = None
+        if shift is not None:
+            shift_status = shift.status.value
+            agg = _treasurer_aggregates(shift, db)
+            if agg is not None:
+                expected = compute_expected_cash_treasurer(
+                    shift.opening_cash_php,
+                    agg["from_dispatches_php"],
+                    agg["dispatches_out_php"],
+                    agg["from_cashier_php"],
+                    agg["bale_peso_php"],
+                    agg["vault_returns_php"],
+                )
+
+        lines.append(TreasurerLine(
+            username=username,
+            full_name=user.full_name if user else None,
+            shift_status=shift_status,
+            expected_cash_php=round(expected, 2),
+        ))
+        total += expected
+
+    return PesoMerlyOut(date=target, total_php=round(total, 2), lines=lines)
