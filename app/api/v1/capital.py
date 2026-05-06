@@ -8,6 +8,7 @@ from app.core.database import get_db
 from app.core.today import get_today
 from app.models.capital import PhpCapitalEntry, BranchCapital, PesoKenEntry
 from app.models.currency import Currency, DailyPosition, DailyRate
+from app.models.investor import Investor
 from app.models.shift import TellerShift, ShiftStatus
 from app.models.transaction import Transaction, TxnPayment, TxnType, PaymentMode, PaymentStatus
 from app.models.user import User
@@ -413,3 +414,54 @@ async def get_peso_merly(
         total += expected
 
     return PesoMerlyOut(date=target, total_php=round(total, 2), lines=lines)
+
+
+# ── Reconciliation (composes all 6 components) ───────────────────────
+
+
+class ReconciliationOut(BaseModel):
+    date:           date_type
+    capital_php:    float    # total owner principal injected
+    stocks_php:     float    # FCY inventory at next-day carry-in rate
+    payables_php:   float    # CHEQUE/BANK pending payments
+    branches_php:   float    # admin-set per-branch allocation
+    peso_ken_php:   float    # Ken's personal float ledger total
+    peso_merly_php: float    # treasurer1 + treasurer2 expected drawer cash
+    available_php:  float    # capital - stocks - payables - branches - peso_ken - peso_merly
+    investor_php:   float    # separate line: pending peso for investor
+
+
+@router.get("/reconciliation", response_model=ReconciliationOut)
+async def get_reconciliation(
+    target_date: Optional[date_type] = Query(default=None, alias="date"),
+    current_user: TokenData = Depends(require_role("admin")),
+    db: Session = Depends(get_db),
+):
+    """
+    Ken's formula:
+      Available = Capital − Stocks − Payables − Branches − Peso Merly − Peso Ken
+    Investor is shown as a separate line, not subtracted.
+    """
+    target = target_date or get_today()
+
+    capital = (await get_php_capital(current_user, db)).running_total
+    stocks   = (await get_stocks(target, current_user, db)).total_php
+    payables = (await get_payables(target, current_user, db)).total_php
+    branches = (await list_branch_capital(current_user, db)).total_php
+    peso_ken = (await get_peso_ken(current_user, db)).running_total
+    peso_merly = (await get_peso_merly(target, current_user, db)).total_php
+    investor = round(sum(i.capital_php for i in db.query(Investor).all()), 2)
+
+    available = round(capital - stocks - payables - branches - peso_ken - peso_merly, 2)
+
+    return ReconciliationOut(
+        date=target,
+        capital_php=capital,
+        stocks_php=stocks,
+        payables_php=payables,
+        branches_php=branches,
+        peso_ken_php=peso_ken,
+        peso_merly_php=peso_merly,
+        available_php=available,
+        investor_php=investor,
+    )
