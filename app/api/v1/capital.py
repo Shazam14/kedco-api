@@ -7,7 +7,7 @@ import uuid
 
 from app.core.database import get_db
 from app.core.today import get_today
-from app.models.capital import PhpCapitalEntry, BranchCapital, PesoKenEntry
+from app.models.capital import PhpCapitalEntry, BranchCapital, PesoKenEntry, MiscEntry
 from app.models.currency import Currency, DailyPosition, DailyRate
 from app.models.investor import Investor
 from app.models.shift import TellerShift, ShiftStatus
@@ -424,6 +424,87 @@ async def delete_peso_ken_entry(
     db.commit()
 
 
+# ── Misc (catch-all peso pool, signed ledger) ───────────────────────
+
+
+def _misc_to_out(e: MiscEntry) -> CapitalEntryOut:
+    return CapitalEntryOut(
+        id=str(e.id), amount_php=e.amount_php, note=e.note,
+        entry_date=e.entry_date, created_by=e.created_by, created_at=e.created_at,
+    )
+
+
+@router.get("/misc", response_model=CapitalLedgerOut)
+async def get_misc(
+    current_user: TokenData = Depends(require_role("admin")),
+    db: Session = Depends(get_db),
+):
+    entries = (
+        db.query(MiscEntry)
+        .order_by(MiscEntry.entry_date.desc(), MiscEntry.created_at.desc())
+        .all()
+    )
+    running_total = round(sum(e.amount_php for e in entries), 2)
+    return CapitalLedgerOut(
+        running_total=running_total,
+        entries=[_misc_to_out(e) for e in entries],
+    )
+
+
+@router.post("/misc", response_model=CapitalEntryOut, status_code=status.HTTP_201_CREATED)
+async def add_misc_entry(
+    payload: CapitalEntryIn,
+    current_user: TokenData = Depends(require_role("admin")),
+    db: Session = Depends(get_db),
+):
+    if payload.amount_php == 0:
+        raise HTTPException(status_code=400, detail="Amount cannot be zero.")
+    entry = MiscEntry(
+        amount_php=payload.amount_php,
+        note=payload.note,
+        entry_date=payload.entry_date or get_today(),
+        created_by=current_user.username,
+    )
+    db.add(entry)
+    db.commit()
+    db.refresh(entry)
+    return _misc_to_out(entry)
+
+
+@router.patch("/misc/{entry_id}", response_model=CapitalEntryOut)
+async def update_misc_entry(
+    entry_id: str,
+    payload: CapitalEntryIn,
+    current_user: TokenData = Depends(require_role("admin")),
+    db: Session = Depends(get_db),
+):
+    if payload.amount_php == 0:
+        raise HTTPException(status_code=400, detail="Amount cannot be zero.")
+    entry = db.query(MiscEntry).filter(MiscEntry.id == _parse_uuid(entry_id)).first()
+    if not entry:
+        raise HTTPException(status_code=404, detail="Entry not found.")
+    entry.amount_php = payload.amount_php
+    entry.note       = payload.note
+    if payload.entry_date is not None:
+        entry.entry_date = payload.entry_date
+    db.commit()
+    db.refresh(entry)
+    return _misc_to_out(entry)
+
+
+@router.delete("/misc/{entry_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_misc_entry(
+    entry_id: str,
+    current_user: TokenData = Depends(require_role("admin")),
+    db: Session = Depends(get_db),
+):
+    entry = db.query(MiscEntry).filter(MiscEntry.id == _parse_uuid(entry_id)).first()
+    if not entry:
+        raise HTTPException(status_code=404, detail="Entry not found.")
+    db.delete(entry)
+    db.commit()
+
+
 # ── Peso Merly (treasurer1 + treasurer2 expected cash for date) ──────
 
 
@@ -502,8 +583,9 @@ class ReconciliationOut(BaseModel):
     payables_php:   float    # CHEQUE/BANK pending payments
     branches_php:   float    # admin-set per-branch allocation
     peso_ken_php:   float    # Ken's personal float ledger total
+    misc_php:       float    # catch-all peso pool ledger total
     peso_merly_php: float    # treasurer1 + treasurer2 expected drawer cash
-    available_php:  float    # capital - stocks - payables - branches - peso_ken - peso_merly
+    available_php:  float    # capital - stocks - payables - branches - peso_ken - misc - peso_merly
     investor_php:   float    # separate line: pending peso for investor
 
 
@@ -515,7 +597,7 @@ async def get_reconciliation(
 ):
     """
     Ken's formula:
-      Available = Capital − Stocks − Payables − Branches − Peso Merly − Peso Ken
+      Available = Capital − Stocks − Payables − Branches − Peso Ken − Misc − Peso Merly
     Investor is shown as a separate line, not subtracted.
     """
     target = target_date or get_today()
@@ -525,10 +607,11 @@ async def get_reconciliation(
     payables = (await get_payables(target, current_user, db)).total_php
     branches = (await list_branch_capital(current_user, db)).total_php
     peso_ken = (await get_peso_ken(current_user, db)).running_total
+    misc       = (await get_misc(current_user, db)).running_total
     peso_merly = (await get_peso_merly(target, current_user, db)).total_php
     investor = round(sum(i.capital_php for i in db.query(Investor).all()), 2)
 
-    available = round(capital - stocks - payables - branches - peso_ken - peso_merly, 2)
+    available = round(capital - stocks - payables - branches - peso_ken - misc - peso_merly, 2)
 
     return ReconciliationOut(
         date=target,
@@ -537,6 +620,7 @@ async def get_reconciliation(
         payables_php=payables,
         branches_php=branches,
         peso_ken_php=peso_ken,
+        misc_php=misc,
         peso_merly_php=peso_merly,
         available_php=available,
         investor_php=investor,

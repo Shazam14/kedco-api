@@ -53,3 +53,19 @@ class PesoKenEntry(Base):
     entry_date    = Column(Date, nullable=False, index=True)
     created_by    = Column(String(50), nullable=False)
     created_at    = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class MiscEntry(Base):
+    """
+    Miscellaneous peso pool — catch-all for cash held outside the main pools
+    (PHP Capital, Peso Ken, Branches, Treasurer). Subtracts from Available in
+    the reconciliation formula. Signed: + add, − withdraw.
+    """
+    __tablename__ = "misc_entries"
+
+    id            = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    amount_php    = Column(Float, nullable=False)            # signed
+    note          = Column(String(300), nullable=True)
+    entry_date    = Column(Date, nullable=False, index=True)
+    created_by    = Column(String(50), nullable=False)
+    created_at    = Column(DateTime(timezone=True), server_default=func.now())
