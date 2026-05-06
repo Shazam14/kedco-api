@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from datetime import date as date_type, datetime, timedelta
 from typing import Optional
 from pydantic import BaseModel
+import uuid
 
 from app.core.database import get_db
 from app.core.today import get_today
@@ -90,6 +91,47 @@ async def add_php_capital_entry(
     db.commit()
     db.refresh(entry)
     return _to_out(entry)
+
+
+def _parse_uuid(raw: str) -> uuid.UUID:
+    try:
+        return uuid.UUID(raw)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Entry not found.")
+
+
+@router.patch("/php/{entry_id}", response_model=CapitalEntryOut)
+async def update_php_capital_entry(
+    entry_id: str,
+    payload: CapitalEntryIn,
+    current_user: TokenData = Depends(require_role("admin")),
+    db: Session = Depends(get_db),
+):
+    if payload.amount_php == 0:
+        raise HTTPException(status_code=400, detail="Amount cannot be zero.")
+    entry = db.query(PhpCapitalEntry).filter(PhpCapitalEntry.id == _parse_uuid(entry_id)).first()
+    if not entry:
+        raise HTTPException(status_code=404, detail="Entry not found.")
+    entry.amount_php = payload.amount_php
+    entry.note       = payload.note
+    if payload.entry_date is not None:
+        entry.entry_date = payload.entry_date
+    db.commit()
+    db.refresh(entry)
+    return _to_out(entry)
+
+
+@router.delete("/php/{entry_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_php_capital_entry(
+    entry_id: str,
+    current_user: TokenData = Depends(require_role("admin")),
+    db: Session = Depends(get_db),
+):
+    entry = db.query(PhpCapitalEntry).filter(PhpCapitalEntry.id == _parse_uuid(entry_id)).first()
+    if not entry:
+        raise HTTPException(status_code=404, detail="Entry not found.")
+    db.delete(entry)
+    db.commit()
 
 
 # ── Reconciliation components ─────────────────────────────────────────
@@ -346,6 +388,40 @@ async def add_peso_ken_entry(
     db.commit()
     db.refresh(entry)
     return _peso_ken_to_out(entry)
+
+
+@router.patch("/peso-ken/{entry_id}", response_model=CapitalEntryOut)
+async def update_peso_ken_entry(
+    entry_id: str,
+    payload: CapitalEntryIn,
+    current_user: TokenData = Depends(require_role("admin")),
+    db: Session = Depends(get_db),
+):
+    if payload.amount_php == 0:
+        raise HTTPException(status_code=400, detail="Amount cannot be zero.")
+    entry = db.query(PesoKenEntry).filter(PesoKenEntry.id == _parse_uuid(entry_id)).first()
+    if not entry:
+        raise HTTPException(status_code=404, detail="Entry not found.")
+    entry.amount_php = payload.amount_php
+    entry.note       = payload.note
+    if payload.entry_date is not None:
+        entry.entry_date = payload.entry_date
+    db.commit()
+    db.refresh(entry)
+    return _peso_ken_to_out(entry)
+
+
+@router.delete("/peso-ken/{entry_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_peso_ken_entry(
+    entry_id: str,
+    current_user: TokenData = Depends(require_role("admin")),
+    db: Session = Depends(get_db),
+):
+    entry = db.query(PesoKenEntry).filter(PesoKenEntry.id == _parse_uuid(entry_id)).first()
+    if not entry:
+        raise HTTPException(status_code=404, detail="Entry not found.")
+    db.delete(entry)
+    db.commit()
 
 
 # ── Peso Merly (treasurer1 + treasurer2 expected cash for date) ──────
