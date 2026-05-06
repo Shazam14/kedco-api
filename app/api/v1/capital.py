@@ -1,12 +1,15 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
-from datetime import date as date_type, datetime
+from datetime import date as date_type, datetime, timedelta
 from typing import Optional
 from pydantic import BaseModel
 
 from app.core.database import get_db
 from app.core.today import get_today
-from app.models.capital import PhpCapitalEntry
+from app.models.capital import PhpCapitalEntry, BranchCapital, PesoKenEntry
+from app.models.currency import Currency, DailyPosition, DailyRate
+from app.models.transaction import Transaction, TxnPayment, TxnType, PaymentMode, PaymentStatus
+from app.models.user import User
 from app.api.v1.auth import require_role, TokenData
 
 router = APIRouter(prefix="/capital", tags=["capital"])
@@ -79,3 +82,212 @@ async def add_php_capital_entry(
     db.commit()
     db.refresh(entry)
     return _to_out(entry)
+
+
+# ── Reconciliation components ─────────────────────────────────────────
+# Ken's formula: Capital − Stocks − Payables − Branches − Merly − Ken = Available
+# Each component below is a building block; the full /reconciliation endpoint
+# composes them. See project_peso_capital_model.md for the full plan.
+
+
+class StockLine(BaseModel):
+    code:           str
+    closing_qty:    float
+    closing_rate:   float        # next-day carry-in rate (= today's closing rate)
+    closing_php:    float
+
+
+class StocksOut(BaseModel):
+    date:        date_type
+    total_php:   float
+    lines:       list[StockLine]
+
+
+@router.get("/stocks", response_model=StocksOut)
+async def get_stocks(
+    target_date: Optional[date_type] = Query(default=None, alias="date"),
+    current_user: TokenData = Depends(require_role("admin")),
+    db: Session = Depends(get_db),
+):
+    """
+    Stocks = Σ(closing_qty × next-day carry_in_rate) per currency for `date`.
+    Closing qty = today's carry_in_qty + buys − sells (per Ken: 'stocks left').
+    Rate = next-day carry_in_rate (matches EOD report's stock_summary).
+    """
+    target = target_date or get_today()
+    next_day = target + timedelta(days=1)
+
+    demo_users = db.query(User.username).filter(User.is_demo == True).scalar_subquery()
+
+    # Opening qty per ccy (today's carry-in)
+    opening = {
+        p.currency_code: p.carry_in_qty
+        for p in db.query(DailyPosition).filter(DailyPosition.date == target).all()
+    }
+    # Closing rate per ccy (next-day's carry-in = today's closing).
+    # Pre-EOD fallback: today's daily_rates.sell_rate (becomes tomorrow's
+    # carry-in after EOD), so reconciliation works before EOD close.
+    closing_rate = {
+        p.currency_code: p.carry_in_rate
+        for p in db.query(DailyPosition).filter(DailyPosition.date == next_day).all()
+    }
+    if not closing_rate:
+        closing_rate = {
+            r.currency_code: r.sell_rate
+            for r in db.query(DailyRate).filter(DailyRate.date == target).all()
+        }
+
+    txns = (
+        db.query(Transaction)
+        .filter(Transaction.date == target)
+        .filter(~Transaction.cashier.in_(demo_users))
+        .all()
+    )
+    delta_qty: dict[str, float] = {}
+    for t in txns:
+        if t.type == TxnType.BUY:
+            delta_qty[t.currency_code] = delta_qty.get(t.currency_code, 0.0) + t.foreign_amt
+        elif t.type == TxnType.SELL:
+            delta_qty[t.currency_code] = delta_qty.get(t.currency_code, 0.0) - t.foreign_amt
+        elif t.type == TxnType.EXCESS:
+            delta_qty[t.currency_code] = delta_qty.get(t.currency_code, 0.0) + t.foreign_amt
+
+    all_codes = set(opening) | set(delta_qty)
+    lines: list[StockLine] = []
+    total_php = 0.0
+    for code in sorted(all_codes):
+        closing_qty = opening.get(code, 0.0) + delta_qty.get(code, 0.0)
+        rate = closing_rate.get(code, 0.0)
+        php = round(closing_qty * rate, 2)
+        total_php += php
+        lines.append(StockLine(
+            code=code, closing_qty=closing_qty,
+            closing_rate=rate, closing_php=php,
+        ))
+
+    return StocksOut(date=target, total_php=round(total_php, 2), lines=lines)
+
+
+class PayableLine(BaseModel):
+    txn_id:     str
+    txn_date:   date_type
+    customer:   Optional[str]
+    method:     str
+    amount_php: float
+
+
+class PayablesOut(BaseModel):
+    date:       date_type   # outstanding *as of* this date
+    total_php:  float
+    lines:      list[PayableLine]
+
+
+@router.get("/payables", response_model=PayablesOut)
+async def get_payables(
+    target_date: Optional[date_type] = Query(default=None, alias="date"),
+    current_user: TokenData = Depends(require_role("admin")),
+    db: Session = Depends(get_db),
+):
+    """
+    Payables = customer payments by CHEQUE or BANK_TRANSFER that are not yet
+    cleared as cash, summed across all txns up to `date`. Per Ken: 'PAYABLES
+    YUNG MGA CUSTOMER BAYAD CHEKE OR BANK TX'.
+    """
+    target = target_date or get_today()
+
+    demo_users = db.query(User.username).filter(User.is_demo == True).scalar_subquery()
+
+    rows = (
+        db.query(TxnPayment, Transaction)
+        .join(Transaction, TxnPayment.txn_id == Transaction.id)
+        .filter(Transaction.date <= target)
+        .filter(~Transaction.cashier.in_(demo_users))
+        .filter(TxnPayment.method.in_([PaymentMode.CHEQUE, PaymentMode.BANK_TRANSFER]))
+        .filter(TxnPayment.status == PaymentStatus.PENDING)
+        .order_by(Transaction.date.desc(), TxnPayment.created_at.desc())
+        .all()
+    )
+
+    lines = [
+        PayableLine(
+            txn_id=t.id, txn_date=t.date, customer=t.customer,
+            method=p.method.value, amount_php=round(p.amount_php, 2),
+        )
+        for p, t in rows
+    ]
+    total_php = round(sum(line.amount_php for line in lines), 2)
+    return PayablesOut(date=target, total_php=total_php, lines=lines)
+
+
+# ── Branches Capital (per-branch peso allocation, admin-config) ───────
+
+
+class BranchCapitalRow(BaseModel):
+    branch_code: str
+    amount_php:  float
+    updated_by:  Optional[str]
+    updated_at:  Optional[datetime]
+
+
+class BranchCapitalOut(BaseModel):
+    total_php: float
+    rows:      list[BranchCapitalRow]
+
+
+class BranchCapitalIn(BaseModel):
+    amount_php: float
+
+
+@router.get("/branches", response_model=BranchCapitalOut)
+async def list_branch_capital(
+    current_user: TokenData = Depends(require_role("admin")),
+    db: Session = Depends(get_db),
+):
+    rows = db.query(BranchCapital).order_by(BranchCapital.branch_code).all()
+    out_rows = [
+        BranchCapitalRow(
+            branch_code=r.branch_code, amount_php=r.amount_php,
+            updated_by=r.updated_by, updated_at=r.updated_at,
+        )
+        for r in rows
+    ]
+    total = round(sum(r.amount_php for r in rows), 2)
+    return BranchCapitalOut(total_php=total, rows=out_rows)
+
+
+@router.put("/branches/{branch_code}", response_model=BranchCapitalRow)
+async def upsert_branch_capital(
+    branch_code: str,
+    payload:     BranchCapitalIn,
+    current_user: TokenData = Depends(require_role("admin")),
+    db:          Session = Depends(get_db),
+):
+    row = db.query(BranchCapital).filter(BranchCapital.branch_code == branch_code).first()
+    if row is None:
+        row = BranchCapital(
+            branch_code=branch_code, amount_php=payload.amount_php,
+            updated_by=current_user.username,
+        )
+        db.add(row)
+    else:
+        row.amount_php = payload.amount_php
+        row.updated_by = current_user.username
+    db.commit()
+    db.refresh(row)
+    return BranchCapitalRow(
+        branch_code=row.branch_code, amount_php=row.amount_php,
+        updated_by=row.updated_by, updated_at=row.updated_at,
+    )
+
+
+@router.delete("/branches/{branch_code}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_branch_capital(
+    branch_code: str,
+    current_user: TokenData = Depends(require_role("admin")),
+    db:          Session = Depends(get_db),
+):
+    row = db.query(BranchCapital).filter(BranchCapital.branch_code == branch_code).first()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Branch capital row not found.")
+    db.delete(row)
+    db.commit()
