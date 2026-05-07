@@ -1,12 +1,13 @@
 from typing import Optional
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 from sqlalchemy import and_
 from pydantic import BaseModel
-from datetime import date
+from datetime import date, datetime
 
 from app.core.database import get_db
 from app.models.shift import TreasurerFloat, TellerShift, ShiftStatus
+from app.models.transaction import Transaction, TxnPayment, PaymentMode
 from app.models.user import User
 from app.api.v1.auth import require_role, TokenData
 from app.core.today import get_today
@@ -143,3 +144,66 @@ async def get_pending_float(
                 }
 
     return None
+
+
+class PendingChequeOut(BaseModel):
+    payment_id: str
+    txn_id: str
+    txn_date: date
+    amount_php: float
+    reference_no: str | None
+    customer: str | None
+    cashier: str
+
+
+@router.get("/cheques/pending", response_model=list[PendingChequeOut])
+async def list_pending_cheques(
+    current_user: TokenData = Depends(require_role("admin", "supervisor")),
+    db: Session = Depends(get_db),
+):
+    rows = (
+        db.query(TxnPayment, Transaction)
+        .join(Transaction, Transaction.id == TxnPayment.txn_id)
+        .filter(TxnPayment.method == PaymentMode.CHEQUE)
+        .filter(TxnPayment.cleared_at.is_(None))
+        .order_by(Transaction.date.desc(), Transaction.time.desc())
+        .all()
+    )
+    return [
+        PendingChequeOut(
+            payment_id=str(p.id),
+            txn_id=t.id,
+            txn_date=t.date,
+            amount_php=p.amount_php,
+            reference_no=p.reference_no,
+            customer=t.customer,
+            cashier=t.cashier,
+        )
+        for p, t in rows
+    ]
+
+
+@router.post("/cheques/{payment_id}/clear")
+async def clear_cheque(
+    payment_id: str,
+    current_user: TokenData = Depends(require_role("admin", "supervisor")),
+    db: Session = Depends(get_db),
+):
+    payment = db.query(TxnPayment).filter(TxnPayment.id == payment_id).first()
+    if not payment:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cheque payment not found")
+    if payment.method != PaymentMode.CHEQUE:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Payment is not a cheque")
+    if payment.cleared_at is not None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cheque already cleared")
+
+    payment.cleared_at = datetime.now()
+    payment.cleared_by = current_user.username
+    db.commit()
+    db.refresh(payment)
+
+    return {
+        "payment_id": str(payment.id),
+        "cleared_at": payment.cleared_at,
+        "cleared_by": payment.cleared_by,
+    }

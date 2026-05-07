@@ -96,6 +96,10 @@ class TxnPayment(Base):
     reference_no = Column(String(60), nullable=True)
     received_at  = Column(DateTime(timezone=True), nullable=True)
     confirmed_by = Column(String(50), nullable=True)
+    # Cheque-only: set when the treasurer confirms the bank cleared the cheque.
+    # Null while in flight; only cleared cheques count toward drawer cash.
+    cleared_at   = Column(DateTime(timezone=True), nullable=True, index=True)
+    cleared_by   = Column(String(50), nullable=True)
     created_at   = Column(DateTime(timezone=True), server_default=func.now())
 
     transaction  = relationship("Transaction", back_populates="payments")

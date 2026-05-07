@@ -5,7 +5,7 @@ from datetime import datetime, date
 
 from app.core.database import get_db
 from app.models.shift import TellerShift, ShiftStatus, CashReplenishment, SafeMovement
-from app.models.transaction import Transaction, PaymentStatus, RiderDispatch, DispatchStatus
+from app.models.transaction import Transaction, TxnPayment, PaymentMode, PaymentStatus, RiderDispatch, DispatchStatus
 from app.models.expense import Expense, ExpenseStatus
 from app.models.user import User, UserRole
 from app.schemas.shift import ShiftOpenIn, ShiftCloseIn, ReplenishIn, ShiftOut, ReplenishmentOut
@@ -111,7 +111,7 @@ def _treasurer_aggregates(shift: TellerShift, db: Session) -> dict | None:
     bale_peso = sum(r.amount_php for r in shift.replenishments if r.source == "SAFE")
 
     # Drawer-to-vault deposits (manual safe deposits) made by this treasurer
-    # during her shift window — these reduce her bale liability and her drawer.
+    # during her shift window.
     vault_deposits_q = (
         db.query(SafeMovement)
         .filter(SafeMovement.movement_date == shift.date)
@@ -125,6 +125,36 @@ def _treasurer_aggregates(shift: TellerShift, db: Session) -> dict | None:
     vault_deposits = vault_deposits_q.all()
     vault_returns = sum(m.amount_php for m in vault_deposits)
 
+    # Treasurer-bucket expenses: rows on operational date with no shift_id
+    # (cashier petty cash carries shift_id; treasurer's expenses don't).
+    # Filter to this treasurer's recorded_by so co-treasurers' spend stays on their own drawer.
+    expenses_rows = (
+        db.query(Expense)
+        .filter(Expense.date == shift.date)
+        .filter(Expense.shift_id.is_(None))
+        .filter(Expense.recorded_by == shift.cashier)
+        .filter(Expense.status != ExpenseStatus.REJECTED)
+        .all()
+    )
+    expenses_php = sum(e.amount_php for e in expenses_rows)
+
+    # Cheques the treasurer marked cleared on this operational date. The bank
+    # confirmation lands as cash on the day she clicks ✓, regardless of when
+    # the cheque was originally issued. Scoped to this treasurer's clears so
+    # co-treasurers don't double-count.
+    # Filter on wall-clock date(cleared_at) — under date override (mock_date.txt)
+    # this would mis-bucket; add an explicit `cleared_date` column if override
+    # support becomes needed (post-5/1 cutover plan = no more override).
+    cleared_cheques = (
+        db.query(TxnPayment)
+        .filter(TxnPayment.method == PaymentMode.CHEQUE)
+        .filter(TxnPayment.cleared_at.isnot(None))
+        .filter(func.date(TxnPayment.cleared_at) == shift.date)
+        .filter(TxnPayment.cleared_by == shift.cashier)
+        .all()
+    )
+    cheques_cleared_php = sum(p.amount_php for p in cleared_cheques)
+
     return {
         "overall_total_bought_php": round(overall_bought, 2),
         "overall_total_sold_php":   round(overall_sold, 2),
@@ -133,6 +163,8 @@ def _treasurer_aggregates(shift: TellerShift, db: Session) -> dict | None:
         "from_cashier_php":         round(from_cashier, 2),
         "bale_peso_php":            round(bale_peso, 2),
         "vault_returns_php":        round(vault_returns, 2),
+        "expenses_php":             round(expenses_php, 2),
+        "cheques_cleared_php":      round(cheques_cleared_php, 2),
     }
 
 
@@ -196,6 +228,8 @@ def _shift_to_out(shift: TellerShift, db: Session) -> ShiftOut:
         from_cashier_php=treasurer_view["from_cashier_php"]                 if treasurer_view else None,
         bale_peso_php=treasurer_view["bale_peso_php"]                       if treasurer_view else None,
         vault_returns_php=treasurer_view["vault_returns_php"]               if treasurer_view else None,
+        expenses_php=treasurer_view["expenses_php"]                         if treasurer_view else None,
+        cheques_cleared_php=treasurer_view["cheques_cleared_php"]           if treasurer_view else None,
     )
 
 
@@ -327,6 +361,8 @@ async def close_shift(
             treasurer_view["from_cashier_php"],
             treasurer_view["bale_peso_php"],
             treasurer_view["vault_returns_php"],
+            treasurer_view["expenses_php"],
+            treasurer_view["cheques_cleared_php"],
         )
         variance = compute_variance(body.closing_cash_php, expected)
     else:

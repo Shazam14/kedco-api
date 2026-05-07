@@ -2,14 +2,21 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from datetime import date
 
-from app.api.v1.auth import require_role, TokenData
-from app.core.today import get_mock_date, set_mock_date, clear_mock_date
+from app.api.v1.auth import require_role, get_current_user, TokenData
+from app.core.today import get_today, get_mock_date, set_mock_date, clear_mock_date
 
 router = APIRouter(prefix="/config", tags=["config"])
 
 
 class TestDateIn(BaseModel):
     date: date
+
+
+@router.get("/today")
+async def get_today_endpoint(
+    current_user: TokenData = Depends(get_current_user),
+):
+    return {"today": get_today().isoformat()}
 
 
 @router.get("/test-date")

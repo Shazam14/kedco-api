@@ -36,22 +36,30 @@ def compute_expected_cash_treasurer(
     from_cashier: float = 0.0,
     bale_peso: float = 0.0,
     vault_returns: float = 0.0,
+    expenses: float = 0.0,
+    cheques_cleared: float = 0.0,
 ) -> float:
     """
-    Opening + (remits in − dispatched out) + cashier handoffs − bale + vault returns.
+    Expected physical cash in the treasurer's drawer at any moment.
 
-    Both legs of the dispatch flow are accounted for:
-      − dispatches_out: cash she handed to riders earlier
-      + from_dispatches: physical cash riders returned at remit
+    Drawer-side rolling formula:
+      opening
+        + (remits in − dispatched out)        rider cash flow
+        + from_cashier                        cashier shift-close handoffs
+        + bale_peso                           vault → drawer (treasurer pulled cash)
+        − vault_returns                       drawer → vault (treasurer deposited back)
+        + cheques_cleared                     cheques confirmed cleared today
+        − expenses                            treasurer-bucket expenses (non-shift petty)
 
-    BALE PESO is segregated as vault accountability (subtracts).
-    VAULT RETURNS are drawer-to-vault deposits during shift — they cancel prior
-    bale liability, so they add back to expected own-money.
+    Sign convention is drawer-physical: bale ADDS (cash arrived in drawer),
+    vault returns SUBTRACT (cash left drawer). Compare against Eunice's manual
+    cash count at close to get variance.
     """
     return round(
         opening_cash
         + from_dispatches - dispatches_out
         + from_cashier
-        - bale_peso + vault_returns,
+        + bale_peso - vault_returns
+        + cheques_cleared - expenses,
         2,
     )

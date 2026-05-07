@@ -9,6 +9,7 @@ from datetime import datetime, time, timedelta
 from app.core.today import get_today
 from app.models.shift import TellerShift, ShiftStatus, CashReplenishment, SafeMovement
 from app.models.transaction import RiderDispatch, DispatchStatus
+from app.models.expense import Expense, ExpenseStatus
 from tests.conftest import auth_header
 
 
@@ -60,6 +61,8 @@ def test_treasurer_shift_flips_treasurer_flag(client, db, supervisor_user):
     assert body["from_cashier_php"] == 0
     assert body["bale_peso_php"] == 0
     assert body["vault_returns_php"] == 0
+    assert body["expenses_php"] == 0
+    assert body["cheques_cleared_php"] == 0
 
 
 def test_overall_totals_sum_all_cashier_txns(client, db, supervisor_user, cashier_user, make_transaction):
@@ -243,7 +246,7 @@ def test_treasurer_close_uses_treasurer_formula(client, db, supervisor_user, cas
     cs1 = _open_shift(db, cashier=cashier_user.username, opening=10_000)
     _close_shift(db, cs1, closing=75_000)
 
-    # 200k bale peso pulled from vault
+    # 200k bale peso pulled from vault into drawer
     treasurer_shift_id = (
         db.query(TellerShift)
         .filter_by(cashier=supervisor_user.username, status=ShiftStatus.OPEN)
@@ -253,14 +256,70 @@ def test_treasurer_close_uses_treasurer_formula(client, db, supervisor_user, cas
     db.add(CashReplenishment(id=uuid.uuid4(), shift_id=treasurer_shift_id, amount_php=200_000, source="SAFE"))
     db.commit()
 
-    # Expected (treasurer formula) = 100k + 50k + 75k − 200k bale = 25k.
-    # Bale is a vault liability; treasurer keeps it segregated from her own-money tally.
+    # 1,500 treasurer-bucket expense (no shift_id)
+    db.add(Expense(
+        date=get_today(),
+        amount_php=1_500,
+        category="OTHERS",
+        recorded_by=supervisor_user.username,
+        shift_id=None,
+        status=ExpenseStatus.APPROVED,
+    ))
+    db.commit()
+
+    # Expected (drawer-side formula): 100k + 50k + 75k + 200k bale − 1.5k expense = 423,500.
+    # Bale ADDS in the new formula — vault cash physically arrived in drawer.
     res = client.post(
         "/api/v1/shifts/close",
         headers=auth_header(supervisor_user.username, "supervisor"),
-        json={"closing_cash_php": 25_000},
+        json={"closing_cash_php": 423_500},
     )
     assert res.status_code == 200, res.text
     body = res.json()
-    assert body["expected_cash_php"] == 25_000
+    assert body["expected_cash_php"] == 423_500
     assert body["cash_variance"]     == 0
+
+
+def test_expenses_php_aggregate_only_treasurer_bucket(client, db, supervisor_user, cashier_user):
+    """Treasurer-bucket expenses are rows on the operational date with shift_id IS NULL
+    AND recorded_by = this treasurer. Cashier petty cash (shift_id set) and other
+    treasurers' expenses (different recorded_by) must not leak in. REJECTED rows excluded."""
+    today = get_today()
+    treasurer_shift = _open_shift(db, cashier=supervisor_user.username)
+
+    # Two treasurer-bucket expenses → count.
+    db.add_all([
+        Expense(date=today, amount_php=2_000, category="MEALS",
+                recorded_by=supervisor_user.username, shift_id=None,
+                status=ExpenseStatus.APPROVED),
+        Expense(date=today, amount_php=500, category="TRANSPORTATION",
+                recorded_by=supervisor_user.username, shift_id=None,
+                status=ExpenseStatus.PENDING),
+    ])
+    # Cashier petty cash (shift_id stamped) → NOT counted.
+    cashier_shift = _open_shift(db, cashier=cashier_user.username, opening=10_000)
+    db.add(Expense(date=today, amount_php=999_999, category="OTHERS",
+                   recorded_by=cashier_user.username, shift_id=cashier_shift.id,
+                   status=ExpenseStatus.APPROVED))
+    # Other-treasurer expense → NOT counted.
+    db.add(Expense(date=today, amount_php=888_888, category="OTHERS",
+                   recorded_by="some_other_treasurer", shift_id=None,
+                   status=ExpenseStatus.APPROVED))
+    # REJECTED → NOT counted.
+    db.add(Expense(date=today, amount_php=777_777, category="OTHERS",
+                   recorded_by=supervisor_user.username, shift_id=None,
+                   status=ExpenseStatus.REJECTED))
+    db.commit()
+
+    res = client.get("/api/v1/shifts/active", headers=auth_header(supervisor_user.username, "supervisor"))
+    body = res.json()
+    assert body["expenses_php"] == 2_500
+
+
+def test_cheques_cleared_php_stub_returns_zero(client, db, supervisor_user):
+    """Phase 2.2 wires this from cleared cheque txn_payments. Until then it's a stub
+    that keeps the formula shape stable. Pin to 0 so the wiring change is visible."""
+    _open_shift(db, cashier=supervisor_user.username)
+    res = client.get("/api/v1/shifts/active", headers=auth_header(supervisor_user.username, "supervisor"))
+    body = res.json()
+    assert body["cheques_cleared_php"] == 0
