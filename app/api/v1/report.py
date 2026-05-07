@@ -7,9 +7,9 @@ from app.core.database import get_db
 from app.core.today import get_today
 from app.models.transaction import Transaction, PaymentStatus, PaymentMode
 from app.models.currency import Currency, DailyPosition
-from app.models.user import User
+from app.models.user import User, UserRole
 from app.models.credit import SpecialCredit, CreditInstallment, CreditStatus
-from app.models.shift import SafeMovement
+from app.models.shift import SafeMovement, TellerShift, ShiftStatus
 from app.api.v1.auth import require_role, TokenData
 
 router = APIRouter(prefix="/report", tags=["report"])
@@ -319,6 +319,27 @@ async def get_daily_report(
     ]
     safe_today_net = round(sum(m.amount_php for m in safe_rows), 2)
 
+    # ── Peso (treasurer drawer bookends) ────────────────────────────────────
+    # Opening = earliest treasurer shift on this date (opening_cash_php).
+    # Closing = latest treasurer shift's declared closing_cash_php, falling
+    # back to expected_cash_php while still open. Treasurer = User.role==supervisor.
+    treasurer_usernames = db.query(User.username).filter(User.role == UserRole.supervisor).scalar_subquery()
+    treasurer_shifts = (
+        db.query(TellerShift)
+        .filter(TellerShift.date == target)
+        .filter(TellerShift.cashier.in_(treasurer_usernames))
+        .order_by(TellerShift.opened_at)
+        .all()
+    )
+    if treasurer_shifts:
+        opening_php = round(treasurer_shifts[0].opening_cash_php or 0.0, 2)
+        last = treasurer_shifts[-1]
+        closing_raw = last.closing_cash_php if last.closing_cash_php is not None else last.expected_cash_php
+        closing_php = round(closing_raw, 2) if closing_raw is not None else None
+    else:
+        opening_php = None
+        closing_php = None
+
     return {
         "date":               str(target),
         "generated_at":       datetime.now().strftime("%I:%M %p"),
@@ -352,6 +373,10 @@ async def get_daily_report(
         "safe": {
             "movements": safe_movements,
             "today_net": safe_today_net,
+        },
+        "peso": {
+            "opening_php": opening_php,
+            "closing_php": closing_php,
         },
         "transactions": [
             {
