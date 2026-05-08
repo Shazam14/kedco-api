@@ -52,11 +52,11 @@ async def get_today_rates(
 @router.post("/today", status_code=status.HTTP_201_CREATED)
 async def set_today_rates(
     rates: List[CurrencyRateIn],
-    current_user: TokenData = Depends(require_role("admin")),
+    current_user: TokenData = Depends(require_role("admin", "supervisor")),
     db: Session = Depends(get_db),
 ):
     """
-    Set or update today's exchange rates. Admin only.
+    Set or update today's exchange rates. Admin or supervisor (treasurer).
     If a rate already exists for today it is updated, otherwise inserted.
     """
     today = get_today()
@@ -93,10 +93,10 @@ async def set_today_rates(
 
 @router.post("/from-carry-in", status_code=status.HTTP_201_CREATED)
 async def set_rates_from_carry_in(
-    current_user: TokenData = Depends(require_role("admin")),
+    current_user: TokenData = Depends(require_role("admin", "supervisor")),
     db: Session = Depends(get_db),
 ):
-    """Copy today's carry-in rates into DailyRate. Use when skipping manual rate entry."""
+    """Copy today's carry-in rates into DailyRate. Admin or supervisor (treasurer)."""
     today = get_today()
     positions = db.query(DailyPosition).filter_by(date=today).all()
     if not positions:
