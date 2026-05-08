@@ -244,7 +244,7 @@ async def create_transaction(
 @router.post("/batch", response_model=list[TransactionOut], status_code=status.HTTP_201_CREATED)
 async def create_batch_transaction(
     batch: TransactionBatchIn,
-    current_user: TokenData = Depends(require_role("admin", "cashier", "supervisor")),
+    current_user: TokenData = Depends(require_role("admin", "cashier", "supervisor", "rider")),
     db: Session = Depends(get_db),
 ):
     today = get_today()
@@ -255,12 +255,17 @@ async def create_batch_transaction(
 
     records = []
     pmode = (batch.payment_mode or "CASH").upper()
+    is_rider = batch.source == "RIDER"
+    # Mirror single-txn: rider non-CASH (BUY or SELL) is PENDING until treasurer confirms.
+    pending = is_rider and pmode != "CASH"
+    slice_status = "PENDING" if pending else "RECEIVED"
+    id_prefix = "RD" if is_rider else "OR"
     now_dt = datetime.now()
     for item in batch.items:
         daily_avg = _get_daily_avg(item.currency, today, db)
         php_amt = round(item.foreign_amt * item.rate, 2)
         than = round((item.rate - daily_avg) * item.foreign_amt, 2) if batch.type == "SELL" else 0.0
-        txn_id = f"OR-{uuid.uuid4().hex[:8].upper()}"
+        txn_id = f"{id_prefix}-{uuid.uuid4().hex[:8].upper()}"
         record = Transaction(
             id=txn_id, date=today, time=now,
             type=batch.type, source=batch.source or "COUNTER",
@@ -273,6 +278,7 @@ async def create_batch_transaction(
             bank_id=batch.bank_id,
             official_rate=item.official_rate,
             referrer=batch.referrer or None,
+            payment_status=slice_status,
             batch_id=batch_uuid,
             terminal_id=batch.terminal_id or None,
             branch_id=batch.branch_id or None,
@@ -283,9 +289,9 @@ async def create_batch_transaction(
             txn_id=record.id,
             method=pmode,
             amount_php=php_amt,
-            status="RECEIVED",
-            received_at=now_dt,
-            confirmed_by=current_user.username,
+            status=slice_status,
+            received_at=now_dt if slice_status == "RECEIVED" else None,
+            confirmed_by=current_user.username if slice_status == "RECEIVED" else None,
         ))
         records.append(record)
 
