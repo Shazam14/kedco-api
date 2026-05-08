@@ -13,6 +13,7 @@ from app.models.credit import SpecialCredit, CreditInstallment, CreditStatus
 from app.models.shift import SafeMovement, TellerShift, ShiftStatus, CashReplenishment
 from app.models.expense import Expense, ExpenseStatus
 from app.api.v1.auth import require_role, TokenData
+from app.services.shifts import compute_expected_cash_treasurer
 
 router = APIRouter(prefix="/report", tags=["report"])
 
@@ -344,6 +345,8 @@ async def get_daily_report(
     else:
         opening_php = None
         closing_php = None
+    # Live flag only flips True after we've computed the live projection below.
+    closing_is_live = False
 
     if treasurer_username_list:
         treasurer_shift_ids = [s.id for s in treasurer_shifts]
@@ -425,6 +428,24 @@ async def get_daily_report(
         dispatched_out_php = 0.0
         from_cashier_php = 0.0
 
+    # Live closing fallback: when a treasurer shift exists but isn't closed yet
+    # (no closing_cash_php and no expected_cash_php written), project the closing
+    # from the same breakdown components the report shows. Same formula as the
+    # supervisor screen so the figure matches what Eunice/Merly see live.
+    if treasurer_shifts and closing_php is None:
+        closing_php = compute_expected_cash_treasurer(
+            opening_cash=opening_php or 0.0,
+            from_dispatches=rider_remits_php,
+            dispatches_out=dispatched_out_php,
+            from_cashier=from_cashier_php,
+            bale_peso=bale_php,
+            inter_branch_in=inter_branch_in_php,
+            vault_returns=vault_returns_php,
+            expenses=expenses_php,
+            cheques_cleared=cheques_cleared_php,
+        )
+        closing_is_live = True
+
     return {
         "date":               str(target),
         "generated_at":       datetime.now().strftime("%I:%M %p"),
@@ -462,6 +483,7 @@ async def get_daily_report(
         "peso": {
             "opening_php": opening_php,
             "closing_php": closing_php,
+            "closing_is_live": closing_is_live,
             "bale_php": bale_php,
             "inter_branch_in_php": inter_branch_in_php,
             "vault_returns_php": vault_returns_php,

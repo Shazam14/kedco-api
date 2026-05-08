@@ -77,6 +77,42 @@ class TestPesoBlock:
         peso = r.json()["peso"]
         assert peso["opening_php"] == 1_000_000.0
         assert peso["closing_php"] == 1_120_000.0
+        # expected_cash_php was already written by a prior shift-close pass,
+        # so this is a finalized projection — not flagged live.
+        assert peso["closing_is_live"] is False
+
+    def test_open_treasurer_shift_with_no_expected_projects_live(self, client, admin_user, db):
+        """While treasurer's shift is OPEN and expected_cash_php hasn't been
+        written yet, closing_php must come from a live projection of the
+        breakdown components (so the report doesn't show ₱0.00 mid-day)."""
+        from app.models.shift import CashReplenishment
+        from app.models.expense import Expense, ExpenseStatus
+        _make_user(db, "treas1", "supervisor", "Treasurer 1")
+        now = datetime.now(timezone.utc)
+        shift = _add_treasurer_shift(
+            db, username="treas1",
+            opened_at=now - timedelta(hours=2),
+            opening_cash_php=1_000_000.0,
+            closing_cash_php=None,
+            expected_cash_php=None,
+            status=ShiftStatus.OPEN,
+        )
+        # Bale (vault → drawer) +200k
+        db.add(CashReplenishment(shift_id=shift.id, amount_php=200_000.0, source="SAFE"))
+        # Treasurer expense −5k
+        db.add(Expense(
+            date=TODAY, amount_php=5_000.0, category="OFFICE_SUPPLIES",
+            description="paper", recorded_by="treas1", shift_id=None,
+            status=ExpenseStatus.APPROVED,
+        ))
+        db.commit()
+
+        r = client.get(f"/api/v1/report/daily?date={TODAY_ISO}", headers=auth_header("admintest", "admin"))
+        peso = r.json()["peso"]
+        assert peso["opening_php"] == 1_000_000.0
+        # 1,000,000 + 200,000 (bale) − 5,000 (expense) = 1,195,000
+        assert peso["closing_php"] == 1_195_000.0
+        assert peso["closing_is_live"] is True
 
     def test_multiple_treasurer_shifts_use_first_and_last(self, client, admin_user, db):
         _make_user(db, "treas1", "supervisor", "Treasurer 1")
