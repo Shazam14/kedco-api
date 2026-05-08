@@ -6,7 +6,7 @@ from typing import Optional
 from app.core.database import get_db
 from app.core.today import get_today
 from sqlalchemy import func
-from app.models.transaction import Transaction, PaymentStatus, PaymentMode, TxnPayment
+from app.models.transaction import Transaction, PaymentStatus, PaymentMode, TxnPayment, RiderDispatch, DispatchStatus
 from app.models.currency import Currency, DailyPosition
 from app.models.user import User, UserRole
 from app.models.credit import SpecialCredit, CreditInstallment, CreditStatus
@@ -383,12 +383,47 @@ async def get_daily_report(
             .filter(TxnPayment.cleared_by.in_(treasurer_username_list))
             .all()
         ), 2)
+        rider_remits_php = round(sum(
+            d.remit_php or 0 for d in db.query(RiderDispatch)
+            .filter(RiderDispatch.date == target)
+            .filter(RiderDispatch.status.in_([DispatchStatus.REMITTED, DispatchStatus.RETURNED]))
+            .all()
+        ), 2)
+        dispatched_out_php = round(sum(
+            d.cash_php or 0 for d in db.query(RiderDispatch)
+            .filter(RiderDispatch.date == target)
+            .filter(RiderDispatch.dispatched_by.in_(treasurer_username_list))
+            .all()
+        ), 2)
+        candidate_closes = (
+            db.query(TellerShift)
+            .filter(TellerShift.date == target)
+            .filter(TellerShift.status == ShiftStatus.CLOSED)
+            .filter(~TellerShift.cashier.in_(treasurer_username_list))
+            .all()
+        )
+        last_per_terminal = []
+        for cs in candidate_closes:
+            later = (
+                db.query(TellerShift)
+                .filter(TellerShift.id != cs.id)
+                .filter(TellerShift.date == cs.date)
+                .filter(TellerShift.terminal_id == cs.terminal_id)
+                .filter(TellerShift.opened_at > cs.opened_at)
+                .first()
+            )
+            if later is None:
+                last_per_terminal.append(cs)
+        from_cashier_php = round(sum(s.closing_cash_php or 0 for s in last_per_terminal), 2)
     else:
         bale_php = 0.0
         inter_branch_in_php = 0.0
         vault_returns_php = 0.0
         expenses_php = 0.0
         cheques_cleared_php = 0.0
+        rider_remits_php = 0.0
+        dispatched_out_php = 0.0
+        from_cashier_php = 0.0
 
     return {
         "date":               str(target),
@@ -432,6 +467,9 @@ async def get_daily_report(
             "vault_returns_php": vault_returns_php,
             "cheques_cleared_php": cheques_cleared_php,
             "expenses_php": expenses_php,
+            "rider_remits_php": rider_remits_php,
+            "dispatched_out_php": dispatched_out_php,
+            "from_cashier_php": from_cashier_php,
         },
         "transactions": [
             {
