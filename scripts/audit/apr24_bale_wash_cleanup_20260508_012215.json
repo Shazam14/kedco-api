@@ -1,0 +1,37 @@
+{
+  "applied_at": "2026-05-08T01:22:15.005763Z",
+  "target_date": "2026-04-24",
+  "reason": "Eunice borrowed \u20b11M from PHP vault in the morning and returned it the same afternoon. Both legs were recorded but display loudly on the daily report (BALE +1.795M / RETURNS -1M). Removing the wash pair so report shows true net bale (+\u20b1795,000) and zero returns. Net peso position unchanged.",
+  "snapshot": {
+    "cash_replenishment": {
+      "id": "addfbdc8-8d64-41cb-905c-a7e608d4504a",
+      "shift_id": "ef387bf1-b69c-4920-9c75-1ac9c108fa49",
+      "amount_php": 1000000.0,
+      "source": "SAFE",
+      "note": "Eunice borrowed 1M from PHP vault (Option B backfill)",
+      "added_at": "2026-04-24T02:50:00+00:00"
+    },
+    "safe_movement_drawer": {
+      "id": "c082d533-6a78-4735-934b-e5abeae3e667",
+      "amount_php": -1000000.0,
+      "reason": "REPLENISH_DRAWER",
+      "note": "Eunice borrowed 1M from PHP vault (Option B backfill)",
+      "actor_username": "treasurer1",
+      "related_replenishment_id": "addfbdc8-8d64-41cb-905c-a7e608d4504a",
+      "related_dispatch_id": null,
+      "movement_date": "2026-04-24",
+      "created_at": "2026-04-24T02:50:00+00:00"
+    },
+    "safe_movement_return": {
+      "id": "16e80958-7c1a-4668-b919-11126eb8f66e",
+      "amount_php": 1000000.0,
+      "reason": "MANUAL_DEPOSIT",
+      "note": "ULI TO EUNICE 4/24 \u2014 1M returned to PHP vault",
+      "actor_username": "treasurer1",
+      "related_replenishment_id": null,
+      "related_dispatch_id": null,
+      "movement_date": "2026-04-24",
+      "created_at": "2026-04-24T14:00:00+00:00"
+    }
+  }
+}
