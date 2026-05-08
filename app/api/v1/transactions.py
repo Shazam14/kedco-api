@@ -8,7 +8,7 @@ import uuid
 
 from app.core.database import get_db
 from app.core.today import get_today
-from app.models.transaction import Transaction, TxnPayment
+from app.models.transaction import Transaction, TxnPayment, RiderDispatch, DispatchStatus
 from app.models.audit import AuditLog
 from app.models.currency import DailyRate, DailyPosition
 from app.models.customer import Customer
@@ -20,6 +20,25 @@ from app.services.forex import compute_position, CarryIn, TodayBuy
 from app.api.v1.auth import require_role, TokenData
 
 router = APIRouter(prefix="/transactions", tags=["transactions"])
+
+
+def _active_rider_dispatch(db: Session, rider_username: str, today_date) -> RiderDispatch:
+    """Return the rider's IN_FIELD dispatch for today, or 400 if none.
+
+    Riders cannot record txns without an active dispatch — this is the gate that
+    makes the rider's screen reset to zero after each remit.
+    """
+    dispatch = db.query(RiderDispatch).filter_by(
+        date=today_date,
+        rider_username=rider_username,
+        status=DispatchStatus.IN_FIELD,
+    ).first()
+    if not dispatch:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No active dispatch — ask admin to dispatch you before recording transactions.",
+        )
+    return dispatch
 
 
 def _resolve_slices(
@@ -195,6 +214,11 @@ async def create_transaction(
     prefix = "RD" if txn.source == "RIDER" else "OR"
     txn_id = f"{prefix}-{uuid.uuid4().hex[:8].upper()}"
 
+    dispatch_id = (
+        _active_rider_dispatch(db, current_user.username, today).id
+        if txn.source == "RIDER" else None
+    )
+
     record = Transaction(
         id=txn_id,
         date=today,
@@ -220,6 +244,7 @@ async def create_transaction(
         note=txn.note or None,
         terminal_id=txn.terminal_id or None,
         branch_id=txn.branch_id or None,
+        dispatch_id=dispatch_id,
     )
     db.add(record)
     db.flush()
@@ -260,6 +285,10 @@ async def create_batch_transaction(
     pending = is_rider and pmode != "CASH"
     slice_status = "PENDING" if pending else "RECEIVED"
     id_prefix = "RD" if is_rider else "OR"
+    dispatch_id = (
+        _active_rider_dispatch(db, current_user.username, today).id
+        if is_rider else None
+    )
     now_dt = datetime.now()
     for item in batch.items:
         daily_avg = _get_daily_avg(item.currency, today, db)
@@ -282,6 +311,7 @@ async def create_batch_transaction(
             batch_id=batch_uuid,
             terminal_id=batch.terminal_id or None,
             branch_id=batch.branch_id or None,
+            dispatch_id=dispatch_id,
         )
         db.add(record)
         db.flush()
@@ -319,6 +349,19 @@ async def get_today_transactions(
         ).first()
         if shift:
             q = q.filter(Transaction.created_at >= shift.opened_at)
+    elif current_user.role == 'rider':
+        # Scope to the rider's current IN_FIELD dispatch — txns from a prior
+        # remitted dispatch should not haunt the next one's screen.
+        q = q.filter(Transaction.cashier == current_user.username)
+        active = db.query(RiderDispatch).filter_by(
+            date=get_today(),
+            rider_username=current_user.username,
+            status=DispatchStatus.IN_FIELD,
+        ).first()
+        if active:
+            q = q.filter(Transaction.dispatch_id == active.id)
+        else:
+            return []
     rows = q.order_by(Transaction.created_at.desc()).all()
     return [_to_txn_out(r) for r in rows]
 

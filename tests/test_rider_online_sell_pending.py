@@ -32,8 +32,9 @@ def usd_setup(db):
 
 class TestRiderOnlineSellForcedPending:
     def test_rider_bank_transfer_sell_is_pending_even_if_client_sends_received(
-        self, client, rider_user, usd_setup
+        self, client, rider_user, make_dispatch, usd_setup
     ):
+        make_dispatch()
         r = client.post(
             "/api/v1/transactions/",
             headers=auth_header("ridertest", "rider"),
@@ -47,7 +48,8 @@ class TestRiderOnlineSellForcedPending:
         assert r.status_code == 201, r.text
         assert r.json()["payment_status"] == "PENDING"
 
-    def test_rider_gcash_sell_is_pending(self, client, rider_user, usd_setup):
+    def test_rider_gcash_sell_is_pending(self, client, rider_user, make_dispatch, usd_setup):
+        make_dispatch()
         r = client.post(
             "/api/v1/transactions/",
             headers=auth_header("ridertest", "rider"),
@@ -60,7 +62,8 @@ class TestRiderOnlineSellForcedPending:
         assert r.status_code == 201, r.text
         assert r.json()["payment_status"] == "PENDING"
 
-    def test_rider_cash_sell_stays_received(self, client, rider_user, usd_setup):
+    def test_rider_cash_sell_stays_received(self, client, rider_user, make_dispatch, usd_setup):
+        make_dispatch()
         r = client.post(
             "/api/v1/transactions/",
             headers=auth_header("ridertest", "rider"),
@@ -73,7 +76,8 @@ class TestRiderOnlineSellForcedPending:
         assert r.status_code == 201, r.text
         assert r.json()["payment_status"] == "RECEIVED"
 
-    def test_rider_buy_with_bank_transfer_forced_pending(self, client, rider_user, usd_setup):
+    def test_rider_buy_with_bank_transfer_forced_pending(self, client, rider_user, make_dispatch, usd_setup):
+        make_dispatch()
         # Phase 5: rider non-CASH BUY = "we still owe the customer" until treasurer
         # wires it. Force PENDING regardless of client. Mirrors the SELL-side rule.
         r = client.post(

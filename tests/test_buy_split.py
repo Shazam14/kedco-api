@@ -104,7 +104,8 @@ class TestCounterBuyAcceptsSplits:
 class TestRiderBuyForcesNonCashPending:
     """Rider non-CASH BUY slice = "we still owe the customer". Force PENDING
     until treasurer wires the money. Cash-out-of-pocket = RECEIVED."""
-    def test_rider_buy_cash_plus_bank_transfer(self, client, rider_user, usd_setup):
+    def test_rider_buy_cash_plus_bank_transfer(self, client, rider_user, make_dispatch, usd_setup):
+        make_dispatch()
         r = client.post(
             "/api/v1/transactions/",
             headers=auth_header("ridertest", "rider"),
@@ -125,7 +126,8 @@ class TestRiderBuyForcesNonCashPending:
         assert bt["status"]   == "PENDING"  # forced regardless of client input
         assert body["payment_status"] == "PENDING"
 
-    def test_rider_buy_all_cash_stays_received(self, client, rider_user, usd_setup):
+    def test_rider_buy_all_cash_stays_received(self, client, rider_user, make_dispatch, usd_setup):
+        make_dispatch()
         # Rider hands customer the whole amount in cash → fully received.
         r = client.post(
             "/api/v1/transactions/",

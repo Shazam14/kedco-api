@@ -23,7 +23,8 @@ def two_ccy_setup(db):
 
 
 class TestRiderBatch:
-    def test_rider_can_submit_batch(self, client, rider_user, two_ccy_setup):
+    def test_rider_can_submit_batch(self, client, rider_user, make_dispatch, two_ccy_setup):
+        make_dispatch()
         r = client.post(
             "/api/v1/transactions/batch",
             headers=auth_header("ridertest", "rider"),
@@ -49,7 +50,8 @@ class TestRiderBatch:
         # CASH → RECEIVED
         assert all(b["payment_status"] == "RECEIVED" for b in body)
 
-    def test_rider_batch_non_cash_forces_pending(self, client, rider_user, two_ccy_setup):
+    def test_rider_batch_non_cash_forces_pending(self, client, rider_user, make_dispatch, two_ccy_setup):
+        make_dispatch()
         r = client.post(
             "/api/v1/transactions/batch",
             headers=auth_header("ridertest", "rider"),

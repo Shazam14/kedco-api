@@ -147,7 +147,8 @@ class TestRiderSplitForcesNonCashPending:
     """Rider sells: only the cash portion lands in-hand. Non-cash slices
     must be PENDING regardless of what client sent — mirrors the existing
     single-method rule, applied per-slice."""
-    def test_rider_cash_plus_gcash_only_cash_received(self, client, rider_user, usd_setup):
+    def test_rider_cash_plus_gcash_only_cash_received(self, client, rider_user, make_dispatch, usd_setup):
+        make_dispatch()
         r = client.post(
             "/api/v1/transactions/",
             headers=auth_header("ridertest", "rider"),
