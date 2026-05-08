@@ -35,6 +35,7 @@ def compute_expected_cash_treasurer(
     dispatches_out: float = 0.0,
     from_cashier: float = 0.0,
     bale_peso: float = 0.0,
+    inter_branch_in: float = 0.0,
     vault_returns: float = 0.0,
     expenses: float = 0.0,
     cheques_cleared: float = 0.0,
@@ -47,6 +48,7 @@ def compute_expected_cash_treasurer(
         + (remits in − dispatched out)        rider cash flow
         + from_cashier                        cashier shift-close handoffs
         + bale_peso                           vault → drawer (treasurer pulled cash)
+        + inter_branch_in                     other branch → this drawer
         − vault_returns                       drawer → vault (treasurer deposited back)
         + cheques_cleared                     cheques confirmed cleared today
         − expenses                            treasurer-bucket expenses (non-shift petty)
@@ -59,7 +61,7 @@ def compute_expected_cash_treasurer(
         opening_cash
         + from_dispatches - dispatches_out
         + from_cashier
-        + bale_peso - vault_returns
+        + bale_peso + inter_branch_in - vault_returns
         + cheques_cleared - expenses,
         2,
     )

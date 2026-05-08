@@ -109,6 +109,8 @@ def _treasurer_aggregates(shift: TellerShift, db: Session) -> dict | None:
     from_cashier = sum(s.closing_cash_php or 0 for s in cashier_closes)
 
     bale_peso = sum(r.amount_php for r in shift.replenishments if r.source == "SAFE")
+    # Cash received from another branch (drawer-positive, vault not involved).
+    inter_branch_in = sum(r.amount_php for r in shift.replenishments if r.source == "INTER_BRANCH")
 
     # Drawer-to-vault deposits (manual safe deposits) made by this treasurer
     # during her shift window.
@@ -162,6 +164,7 @@ def _treasurer_aggregates(shift: TellerShift, db: Session) -> dict | None:
         "dispatches_out_php":       round(dispatches_out, 2),
         "from_cashier_php":         round(from_cashier, 2),
         "bale_peso_php":            round(bale_peso, 2),
+        "inter_branch_in_php":      round(inter_branch_in, 2),
         "vault_returns_php":        round(vault_returns, 2),
         "expenses_php":             round(expenses_php, 2),
         "cheques_cleared_php":      round(cheques_cleared_php, 2),
@@ -227,6 +230,7 @@ def _shift_to_out(shift: TellerShift, db: Session) -> ShiftOut:
         dispatches_out_php=treasurer_view["dispatches_out_php"]             if treasurer_view else None,
         from_cashier_php=treasurer_view["from_cashier_php"]                 if treasurer_view else None,
         bale_peso_php=treasurer_view["bale_peso_php"]                       if treasurer_view else None,
+        inter_branch_in_php=treasurer_view["inter_branch_in_php"]           if treasurer_view else None,
         vault_returns_php=treasurer_view["vault_returns_php"]               if treasurer_view else None,
         expenses_php=treasurer_view["expenses_php"]                         if treasurer_view else None,
         cheques_cleared_php=treasurer_view["cheques_cleared_php"]           if treasurer_view else None,
@@ -289,7 +293,7 @@ async def replenish_cash(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No open shift found for today.")
 
     source = (body.source or "TREASURER_FLOAT").upper()
-    if source not in {"TREASURER_FLOAT", "SAFE", "EXTERNAL", "OTHER"}:
+    if source not in {"TREASURER_FLOAT", "SAFE", "INTER_BRANCH", "EXTERNAL", "OTHER"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid source: {source}")
 
     replenishment = CashReplenishment(
@@ -360,6 +364,7 @@ async def close_shift(
             treasurer_view["dispatches_out_php"],
             treasurer_view["from_cashier_php"],
             treasurer_view["bale_peso_php"],
+            treasurer_view["inter_branch_in_php"],
             treasurer_view["vault_returns_php"],
             treasurer_view["expenses_php"],
             treasurer_view["cheques_cleared_php"],

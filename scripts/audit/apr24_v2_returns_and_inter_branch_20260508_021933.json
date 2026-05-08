@@ -1,0 +1,30 @@
+{
+  "applied_at": "2026-05-08T02:19:33.534146Z",
+  "target_date": "2026-04-24",
+  "reason": "Restore wrongly-deleted 1M MANUAL_DEPOSIT (Ken's reconciliation shows it is a real return-to-vault, not a wash with Eunice's borrow). Add 200k INTER_BRANCH from CTS that was never recorded digitally.",
+  "actions": {
+    "restore_safe_movement_1m": {
+      "row": {
+        "id": "16e80958-7c1a-4668-b919-11126eb8f66e",
+        "amount_php": 1000000.0,
+        "reason": "MANUAL_DEPOSIT",
+        "note": "ULI 4/24 \u2014 1M returned to PHP vault (restored 2026-05-08)",
+        "actor_username": "treasurer1",
+        "movement_date": "2026-04-24",
+        "created_at": "2026-04-24 14:00:00+00:00"
+      },
+      "status": "applied"
+    },
+    "insert_inter_branch_200k": {
+      "id": "f2fd7ca5-3a73-48c8-a20d-1f7fd6865693",
+      "row": {
+        "shift_id": "ef387bf1-b69c-4920-9c75-1ac9c108fa49",
+        "amount_php": 200000.0,
+        "source": "INTER_BRANCH",
+        "note": "from CTS \u2014 Ken's 4/24 reconciliation",
+        "added_at": "2026-04-24T08:00:00+00:00"
+      },
+      "status": "applied"
+    }
+  }
+}

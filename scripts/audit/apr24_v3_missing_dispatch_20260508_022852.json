@@ -1,0 +1,25 @@
+{
+  "applied_at": "2026-05-08T02:28:52.244225Z",
+  "target_date": "2026-04-24",
+  "reason": "Backfill missing 900k OUT line from Ken's 4/24 handwritten reconciliation. Closes the system-vs-book gap; entry is tagged PAPER_ONLY in notes for audit.",
+  "actions": {
+    "insert_dispatch_900k": {
+      "id": "da9fd614-c065-429c-b8fb-0f2b1b6091c3",
+      "row": {
+        "date": "2026-04-24",
+        "rider_username": "rider02",
+        "rider_name": "Rider 02",
+        "cash_php": 900000.0,
+        "remit_php": 0.0,
+        "status": "RETURNED",
+        "dispatched_by": "treasurer1",
+        "notes": "PAPER_ONLY \u2014 Ken's 4/24 book reconciliation 2026-05-08; \u20b1900k OUT line never entered live; rider attribution best-guess",
+        "dispatch_time": "10:00",
+        "return_time": "15:00",
+        "created_at": "2026-04-24T10:00:00+00:00",
+        "updated_at": "2026-04-24T15:00:00+00:00"
+      },
+      "status": "applied"
+    }
+  }
+}
