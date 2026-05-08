@@ -371,10 +371,14 @@ async def get_daily_report(
             .filter(SafeMovement.actor_username.in_(treasurer_username_list))
             .all()
         ), 2)
+        # Treasurer-bucket expenses: recorded by a treasurer on this date.
+        # Drops the legacy `shift_id IS NULL` filter — once treasurers got
+        # TellerShifts (Treasurer Screen v2), their expenses started carrying
+        # shift_id and the old filter excluded them. recorded_by alone is
+        # sufficient: cashier petty cash has cashier username (not in list).
         expenses_php = round(sum(
             e.amount_php for e in db.query(Expense)
             .filter(Expense.date == target)
-            .filter(Expense.shift_id.is_(None))
             .filter(Expense.recorded_by.in_(treasurer_username_list))
             .filter(Expense.status != ExpenseStatus.REJECTED)
             .all()

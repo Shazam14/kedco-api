@@ -173,6 +173,32 @@ class TestPesoBlock:
         assert peso["vault_returns_php"] == 0.0
         assert peso["cheques_cleared_php"] == 0.0
 
+    def test_breakdown_counts_treasurer_shift_stamped_expenses(self, client, admin_user, db):
+        """Regression: once treasurers got TellerShifts, their expenses started
+        carrying shift_id (their own treasurer shift). The peso breakdown must
+        still count them — the legacy shift_id IS NULL filter was the bug."""
+        from app.models.expense import Expense, ExpenseStatus
+        _make_user(db, "treas1", "supervisor", "Treasurer 1")
+        now = datetime.now(timezone.utc)
+        shift = _add_treasurer_shift(
+            db, username="treas1",
+            opened_at=now - timedelta(hours=2),
+            opening_cash_php=1_000_000.0,
+            closing_cash_php=980_000.0,
+            status=ShiftStatus.CLOSED,
+        )
+        # Treasurer expense WITH shift_id stamped to her own shift.
+        db.add(Expense(
+            date=TODAY, amount_php=20_000.0, category="UTILITIES",
+            recorded_by="treas1", shift_id=shift.id,
+            status=ExpenseStatus.APPROVED,
+        ))
+        db.commit()
+
+        r = client.get(f"/api/v1/report/daily?date={TODAY_ISO}", headers=auth_header("admintest", "admin"))
+        peso = r.json()["peso"]
+        assert peso["expenses_php"] == 20_000.0
+
     def test_vault_movements_signed_net(self, client, admin_user, db):
         """Vault movements net signed: deposits (+) subtract, withdrawals (−) add.
         A treasurer pulling cash from vault into her drawer should raise closing peso."""

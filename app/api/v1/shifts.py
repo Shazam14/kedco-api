@@ -126,13 +126,14 @@ def _treasurer_aggregates(shift: TellerShift, db: Session) -> dict | None:
     vault_movements = vault_movements_q.all()
     vault_returns = sum(m.amount_php for m in vault_movements)
 
-    # Treasurer-bucket expenses: rows on operational date with no shift_id
-    # (cashier petty cash carries shift_id; treasurer's expenses don't).
-    # Filter to this treasurer's recorded_by so co-treasurers' spend stays on their own drawer.
+    # Treasurer-bucket expenses: rows recorded by this treasurer on this date.
+    # Once treasurers got TellerShifts, their expenses carry shift_id (their own
+    # treasurer shift) — recorded_by is the only stable signal that an expense
+    # belongs to this treasurer's drawer. Cashier petty cash has cashier
+    # username so it can never leak in.
     expenses_rows = (
         db.query(Expense)
         .filter(Expense.date == shift.date)
-        .filter(Expense.shift_id.is_(None))
         .filter(Expense.recorded_by == shift.cashier)
         .filter(Expense.status != ExpenseStatus.REJECTED)
         .all()

@@ -316,6 +316,29 @@ def test_expenses_php_aggregate_only_treasurer_bucket(client, db, supervisor_use
     assert body["expenses_php"] == 2_500
 
 
+def test_expenses_php_counts_treasurer_shift_stamped_rows(client, db, supervisor_user, cashier_user):
+    """After Treasurer Screen v2, treasurer expenses get auto-stamped with the
+    treasurer's shift_id. The aggregate must still count them — the legacy
+    `shift_id IS NULL` filter was the bug being fixed here. recorded_by is the
+    only stable signal."""
+    today = get_today()
+    treasurer_shift = _open_shift(db, cashier=supervisor_user.username)
+    cashier_shift = _open_shift(db, cashier=cashier_user.username, opening=10_000)
+
+    # Treasurer expense WITH shift_id stamped → must count (regression).
+    db.add(Expense(date=today, amount_php=10_000, category="UTILITIES",
+                   recorded_by=supervisor_user.username, shift_id=treasurer_shift.id,
+                   status=ExpenseStatus.APPROVED))
+    # Cashier petty cash with cashier shift_id → must NOT leak in.
+    db.add(Expense(date=today, amount_php=999_999, category="OTHERS",
+                   recorded_by=cashier_user.username, shift_id=cashier_shift.id,
+                   status=ExpenseStatus.APPROVED))
+    db.commit()
+
+    res = client.get("/api/v1/shifts/active", headers=auth_header(supervisor_user.username, "supervisor"))
+    assert res.json()["expenses_php"] == 10_000
+
+
 def test_cheques_cleared_php_stub_returns_zero(client, db, supervisor_user):
     """Phase 2.2 wires this from cleared cheque txn_payments. Until then it's a stub
     that keeps the formula shape stable. Pin to 0 so the wiring change is visible."""
