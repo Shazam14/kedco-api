@@ -37,7 +37,13 @@ class TestPesoBlock:
         r = client.get(f"/api/v1/report/daily?date={TODAY_ISO}", headers=auth_header("admintest", "admin"))
         assert r.status_code == 200, r.text
         peso = r.json()["peso"]
-        assert peso == {"opening_php": None, "closing_php": None}
+        assert peso["opening_php"] is None
+        assert peso["closing_php"] is None
+        # Breakdown components present, all zero when no treasurer in DB.
+        assert peso["bale_php"] == 0.0
+        assert peso["vault_returns_php"] == 0.0
+        assert peso["cheques_cleared_php"] == 0.0
+        assert peso["expenses_php"] == 0.0
 
     def test_single_closed_treasurer_shift(self, client, admin_user, db):
         _make_user(db, "treas1", "supervisor", "Treasurer 1")
@@ -96,6 +102,41 @@ class TestPesoBlock:
         assert peso["opening_php"] == 2_000_000.0
         assert peso["closing_php"] == 2_400_000.0
 
+    def test_breakdown_aggregates_bale_and_expenses(self, client, admin_user, db):
+        from app.models.shift import CashReplenishment
+        from app.models.expense import Expense, ExpenseStatus
+        _make_user(db, "treas1", "supervisor", "Treasurer 1")
+        now = datetime.now(timezone.utc)
+        shift = _add_treasurer_shift(
+            db, username="treas1",
+            opened_at=now - timedelta(hours=4),
+            opening_cash_php=1_000_000.0,
+            closing_cash_php=1_200_000.0,
+            status=ShiftStatus.CLOSED,
+        )
+        # Bale (vault → drawer) on this treasurer shift.
+        db.add(CashReplenishment(shift_id=shift.id, amount_php=300_000.0, source="SAFE"))
+        # Treasurer-bucket expense (no shift_id).
+        db.add(Expense(
+            date=TODAY, amount_php=4_500.0, category="OFFICE_SUPPLIES",
+            description="paper", recorded_by="treas1", shift_id=None,
+            status=ExpenseStatus.APPROVED,
+        ))
+        # Rejected expense should NOT count.
+        db.add(Expense(
+            date=TODAY, amount_php=10_000.0, category="OFFICE_SUPPLIES",
+            description="reversed", recorded_by="treas1", shift_id=None,
+            status=ExpenseStatus.REJECTED,
+        ))
+        db.commit()
+
+        r = client.get(f"/api/v1/report/daily?date={TODAY_ISO}", headers=auth_header("admintest", "admin"))
+        peso = r.json()["peso"]
+        assert peso["bale_php"] == 300_000.0
+        assert peso["expenses_php"] == 4_500.0
+        assert peso["vault_returns_php"] == 0.0
+        assert peso["cheques_cleared_php"] == 0.0
+
     def test_cashier_shift_does_not_count(self, client, admin_user, db):
         _make_user(db, "casher1", "cashier", "Cashier 1")
         now = datetime.now(timezone.utc)
@@ -108,4 +149,5 @@ class TestPesoBlock:
         )
         r = client.get(f"/api/v1/report/daily?date={TODAY_ISO}", headers=auth_header("admintest", "admin"))
         peso = r.json()["peso"]
-        assert peso == {"opening_php": None, "closing_php": None}
+        assert peso["opening_php"] is None
+        assert peso["closing_php"] is None

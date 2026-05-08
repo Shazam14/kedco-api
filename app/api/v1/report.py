@@ -5,11 +5,13 @@ from typing import Optional
 
 from app.core.database import get_db
 from app.core.today import get_today
-from app.models.transaction import Transaction, PaymentStatus, PaymentMode
+from sqlalchemy import func
+from app.models.transaction import Transaction, PaymentStatus, PaymentMode, TxnPayment
 from app.models.currency import Currency, DailyPosition
 from app.models.user import User, UserRole
 from app.models.credit import SpecialCredit, CreditInstallment, CreditStatus
-from app.models.shift import SafeMovement, TellerShift, ShiftStatus
+from app.models.shift import SafeMovement, TellerShift, ShiftStatus, CashReplenishment
+from app.models.expense import Expense, ExpenseStatus
 from app.api.v1.auth import require_role, TokenData
 
 router = APIRouter(prefix="/report", tags=["report"])
@@ -319,18 +321,21 @@ async def get_daily_report(
     ]
     safe_today_net = round(sum(m.amount_php for m in safe_rows), 2)
 
-    # ── Peso (treasurer drawer bookends) ────────────────────────────────────
+    # ── Peso (treasurer drawer bookends + breakdown) ────────────────────────
     # Opening = earliest treasurer shift on this date (opening_cash_php).
     # Closing = latest treasurer shift's declared closing_cash_php, falling
     # back to expected_cash_php while still open. Treasurer = User.role==supervisor.
-    treasurer_usernames = db.query(User.username).filter(User.role == UserRole.supervisor).scalar_subquery()
+    # Breakdown components mirror _treasurer_aggregates in shifts.py but rolled
+    # up to the daily level so a single peso flow row can show OPEN + SOLD −
+    # BOUGHT + BALE − RETURNS + CHEQUES − EXPENSES = CLOSE.
+    treasurer_username_list = [u for (u,) in db.query(User.username).filter(User.role == UserRole.supervisor).all()]
     treasurer_shifts = (
         db.query(TellerShift)
         .filter(TellerShift.date == target)
-        .filter(TellerShift.cashier.in_(treasurer_usernames))
+        .filter(TellerShift.cashier.in_(treasurer_username_list))
         .order_by(TellerShift.opened_at)
         .all()
-    )
+    ) if treasurer_username_list else []
     if treasurer_shifts:
         opening_php = round(treasurer_shifts[0].opening_cash_php or 0.0, 2)
         last = treasurer_shifts[-1]
@@ -339,6 +344,44 @@ async def get_daily_report(
     else:
         opening_php = None
         closing_php = None
+
+    if treasurer_username_list:
+        treasurer_shift_ids = [s.id for s in treasurer_shifts]
+        bale_php = round(sum(
+            r.amount_php for r in db.query(CashReplenishment)
+            .filter(CashReplenishment.shift_id.in_(treasurer_shift_ids))
+            .filter(CashReplenishment.source == "SAFE")
+            .all()
+        ), 2) if treasurer_shift_ids else 0.0
+        vault_returns_php = round(sum(
+            m.amount_php for m in db.query(SafeMovement)
+            .filter(SafeMovement.movement_date == target)
+            .filter(SafeMovement.actor_username.in_(treasurer_username_list))
+            .filter(SafeMovement.amount_php > 0)
+            .filter(SafeMovement.reason == "MANUAL_DEPOSIT")
+            .all()
+        ), 2)
+        expenses_php = round(sum(
+            e.amount_php for e in db.query(Expense)
+            .filter(Expense.date == target)
+            .filter(Expense.shift_id.is_(None))
+            .filter(Expense.recorded_by.in_(treasurer_username_list))
+            .filter(Expense.status != ExpenseStatus.REJECTED)
+            .all()
+        ), 2)
+        cheques_cleared_php = round(sum(
+            p.amount_php for p in db.query(TxnPayment)
+            .filter(TxnPayment.method == PaymentMode.CHEQUE)
+            .filter(TxnPayment.cleared_at.isnot(None))
+            .filter(func.date(TxnPayment.cleared_at) == target)
+            .filter(TxnPayment.cleared_by.in_(treasurer_username_list))
+            .all()
+        ), 2)
+    else:
+        bale_php = 0.0
+        vault_returns_php = 0.0
+        expenses_php = 0.0
+        cheques_cleared_php = 0.0
 
     return {
         "date":               str(target),
@@ -377,6 +420,10 @@ async def get_daily_report(
         "peso": {
             "opening_php": opening_php,
             "closing_php": closing_php,
+            "bale_php": bale_php,
+            "vault_returns_php": vault_returns_php,
+            "cheques_cleared_php": cheques_cleared_php,
+            "expenses_php": expenses_php,
         },
         "transactions": [
             {
