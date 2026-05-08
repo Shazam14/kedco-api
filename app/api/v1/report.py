@@ -362,12 +362,13 @@ async def get_daily_report(
             .filter(CashReplenishment.source == "INTER_BRANCH")
             .all()
         ), 2) if treasurer_shift_ids else 0.0
+        # Signed net of treasurer-actor vault movements: + = drawer→vault deposit,
+        # − = vault→drawer withdrawal. Formula subtracts this so withdrawals add
+        # to closing peso (cash arrived in drawer) and deposits subtract (cash left).
         vault_returns_php = round(sum(
             m.amount_php for m in db.query(SafeMovement)
             .filter(SafeMovement.movement_date == target)
             .filter(SafeMovement.actor_username.in_(treasurer_username_list))
-            .filter(SafeMovement.amount_php > 0)
-            .filter(SafeMovement.reason == "MANUAL_DEPOSIT")
             .all()
         ), 2)
         expenses_php = round(sum(

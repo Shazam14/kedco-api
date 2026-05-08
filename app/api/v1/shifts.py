@@ -112,20 +112,19 @@ def _treasurer_aggregates(shift: TellerShift, db: Session) -> dict | None:
     # Cash received from another branch (drawer-positive, vault not involved).
     inter_branch_in = sum(r.amount_php for r in shift.replenishments if r.source == "INTER_BRANCH")
 
-    # Drawer-to-vault deposits (manual safe deposits) made by this treasurer
-    # during her shift window.
-    vault_deposits_q = (
+    # Signed net of vault movements by this treasurer during her shift window.
+    # + = drawer→vault deposit, − = vault→drawer withdrawal. Formula subtracts
+    # this so withdrawals add to expected drawer cash, deposits subtract.
+    vault_movements_q = (
         db.query(SafeMovement)
         .filter(SafeMovement.movement_date == shift.date)
         .filter(SafeMovement.actor_username == shift.cashier)
-        .filter(SafeMovement.amount_php > 0)
-        .filter(SafeMovement.reason == "MANUAL_DEPOSIT")
         .filter(SafeMovement.created_at <= window_end)
     )
     if window_start is not None:
-        vault_deposits_q = vault_deposits_q.filter(SafeMovement.created_at >= window_start)
-    vault_deposits = vault_deposits_q.all()
-    vault_returns = sum(m.amount_php for m in vault_deposits)
+        vault_movements_q = vault_movements_q.filter(SafeMovement.created_at >= window_start)
+    vault_movements = vault_movements_q.all()
+    vault_returns = sum(m.amount_php for m in vault_movements)
 
     # Treasurer-bucket expenses: rows on operational date with no shift_id
     # (cashier petty cash carries shift_id; treasurer's expenses don't).

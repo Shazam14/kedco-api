@@ -49,7 +49,9 @@ def compute_expected_cash_treasurer(
         + from_cashier                        cashier shift-close handoffs
         + bale_peso                           vault → drawer (treasurer pulled cash)
         + inter_branch_in                     other branch → this drawer
-        − vault_returns                       drawer → vault (treasurer deposited back)
+        − vault_returns                       signed net of vault movements
+                                              (+ = drawer→vault deposit,
+                                               − = vault→drawer withdrawal)
         + cheques_cleared                     cheques confirmed cleared today
         − expenses                            treasurer-bucket expenses (non-shift petty)
 

@@ -173,6 +173,49 @@ class TestPesoBlock:
         assert peso["vault_returns_php"] == 0.0
         assert peso["cheques_cleared_php"] == 0.0
 
+    def test_vault_movements_signed_net(self, client, admin_user, db):
+        """Vault movements net signed: deposits (+) subtract, withdrawals (−) add.
+        A treasurer pulling cash from vault into her drawer should raise closing peso."""
+        from app.models.shift import SafeMovement
+        import uuid as _uuid
+        _make_user(db, "treas1", "supervisor", "Treasurer 1")
+        now = datetime.now(timezone.utc)
+        _add_treasurer_shift(
+            db, username="treas1",
+            opened_at=now - timedelta(hours=4),
+            opening_cash_php=1_000_000.0,
+            closing_cash_php=None,
+            expected_cash_php=None,
+            status=ShiftStatus.OPEN,
+        )
+        # Withdrawal: vault → drawer (drawer cash UP by 500k).
+        # Reason intentionally OTHER, not MANUAL_DEPOSIT — should still count.
+        db.add(SafeMovement(
+            id=_uuid.uuid4(),
+            amount_php=-500_000.0,
+            reason="OTHER",
+            note="vale ike",
+            actor_username="treas1",
+            movement_date=TODAY,
+        ))
+        # Deposit: drawer → vault (drawer cash DOWN by 100k).
+        db.add(SafeMovement(
+            id=_uuid.uuid4(),
+            amount_php=100_000.0,
+            reason="MANUAL_DEPOSIT",
+            actor_username="treas1",
+            movement_date=TODAY,
+        ))
+        db.commit()
+
+        r = client.get(f"/api/v1/report/daily?date={TODAY_ISO}", headers=auth_header("admintest", "admin"))
+        peso = r.json()["peso"]
+        # Net = -500k + 100k = -400k (drawer received 400k net from vault).
+        assert peso["vault_returns_php"] == -400_000.0
+        # Closing = opening − vault_returns = 1,000,000 − (−400,000) = 1,400,000.
+        assert peso["closing_php"] == 1_400_000.0
+        assert peso["closing_is_live"] is True
+
     def test_cashier_shift_does_not_count(self, client, admin_user, db):
         _make_user(db, "casher1", "cashier", "Cashier 1")
         now = datetime.now(timezone.utc)
