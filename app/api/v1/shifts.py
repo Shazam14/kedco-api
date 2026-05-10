@@ -4,11 +4,11 @@ from sqlalchemy import func
 from datetime import datetime, date
 
 from app.core.database import get_db
-from app.models.shift import TellerShift, ShiftStatus, CashReplenishment, SafeMovement
+from app.models.shift import TellerShift, ShiftStatus, CashReplenishment, SafeMovement, InterBranchOutflow
 from app.models.transaction import Transaction, TxnPayment, PaymentMode, PaymentStatus, RiderDispatch, DispatchStatus
 from app.models.expense import Expense, ExpenseStatus
 from app.models.user import User, UserRole
-from app.schemas.shift import ShiftOpenIn, ShiftCloseIn, ReplenishIn, ShiftOut, ReplenishmentOut
+from app.schemas.shift import ShiftOpenIn, ShiftCloseIn, ReplenishIn, ShiftOut, ReplenishmentOut, InterBranchOutIn, InterBranchOutflowOut
 from app.api.v1.auth import require_role, TokenData
 from app.core.today import get_today
 from app.services.shifts import compute_expected_cash, compute_variance, compute_expected_cash_treasurer
@@ -111,6 +111,8 @@ def _treasurer_aggregates(shift: TellerShift, db: Session) -> dict | None:
     bale_peso = sum(r.amount_php for r in shift.replenishments if r.source == "SAFE")
     # Cash received from another branch (drawer-positive, vault not involved).
     inter_branch_in = sum(r.amount_php for r in shift.replenishments if r.source == "INTER_BRANCH")
+    # Cash sent to another branch (drawer-negative, vault not involved).
+    inter_branch_out = sum(o.amount_php for o in shift.inter_branch_outflows)
 
     # Signed net of vault movements by this treasurer during her shift window.
     # + = drawer→vault deposit, − = vault→drawer withdrawal. Formula subtracts
@@ -165,6 +167,7 @@ def _treasurer_aggregates(shift: TellerShift, db: Session) -> dict | None:
         "from_cashier_php":         round(from_cashier, 2),
         "bale_peso_php":            round(bale_peso, 2),
         "inter_branch_in_php":      round(inter_branch_in, 2),
+        "inter_branch_out_php":     round(inter_branch_out, 2),
         "vault_returns_php":        round(vault_returns, 2),
         "expenses_php":             round(expenses_php, 2),
         "cheques_cleared_php":      round(cheques_cleared_php, 2),
@@ -223,6 +226,10 @@ def _shift_to_out(shift: TellerShift, db: Session) -> ShiftOut:
             ReplenishmentOut(id=str(r.id), amount_php=r.amount_php, note=r.note, source=r.source, added_at=r.added_at)
             for r in shift.replenishments
         ],
+        inter_branch_outflows=[
+            InterBranchOutflowOut(id=str(o.id), amount_php=o.amount_php, note=o.note, sent_at=o.sent_at)
+            for o in shift.inter_branch_outflows
+        ],
         is_treasurer_shift=treasurer_view is not None,
         overall_total_bought_php=treasurer_view["overall_total_bought_php"] if treasurer_view else None,
         overall_total_sold_php=treasurer_view["overall_total_sold_php"]     if treasurer_view else None,
@@ -231,6 +238,7 @@ def _shift_to_out(shift: TellerShift, db: Session) -> ShiftOut:
         from_cashier_php=treasurer_view["from_cashier_php"]                 if treasurer_view else None,
         bale_peso_php=treasurer_view["bale_peso_php"]                       if treasurer_view else None,
         inter_branch_in_php=treasurer_view["inter_branch_in_php"]           if treasurer_view else None,
+        inter_branch_out_php=treasurer_view["inter_branch_out_php"]         if treasurer_view else None,
         vault_returns_php=treasurer_view["vault_returns_php"]               if treasurer_view else None,
         expenses_php=treasurer_view["expenses_php"]                         if treasurer_view else None,
         cheques_cleared_php=treasurer_view["cheques_cleared_php"]           if treasurer_view else None,
@@ -321,6 +329,38 @@ async def replenish_cash(
     return _shift_to_out(shift, db)
 
 
+@router.post("/inter-branch-out", response_model=ShiftOut)
+async def send_inter_branch(
+    body: InterBranchOutIn,
+    current_user: TokenData = Depends(require_role("supervisor")),
+    db: Session = Depends(get_db),
+):
+    """Treasurer dispatches cash from her drawer to another branch.
+    Drawer-negative; vault is not touched."""
+    today = get_today()
+
+    shift = db.query(TellerShift).filter_by(
+        cashier=current_user.username,
+        date=today,
+        status=ShiftStatus.OPEN,
+    ).first()
+    if not shift:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No open shift found for today.")
+
+    if body.amount_php <= 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Amount must be positive.")
+
+    db.add(InterBranchOutflow(
+        shift_id=shift.id,
+        amount_php=body.amount_php,
+        note=body.note,
+    ))
+    db.commit()
+    db.refresh(shift)
+
+    return _shift_to_out(shift, db)
+
+
 @router.post("/close", response_model=ShiftOut)
 async def close_shift(
     body: ShiftCloseIn,
@@ -359,15 +399,16 @@ async def close_shift(
     treasurer_view = _treasurer_aggregates(shift, db)
     if treasurer_view is not None:
         expected = compute_expected_cash_treasurer(
-            shift.opening_cash_php,
-            treasurer_view["from_dispatches_php"],
-            treasurer_view["dispatches_out_php"],
-            treasurer_view["from_cashier_php"],
-            treasurer_view["bale_peso_php"],
-            treasurer_view["inter_branch_in_php"],
-            treasurer_view["vault_returns_php"],
-            treasurer_view["expenses_php"],
-            treasurer_view["cheques_cleared_php"],
+            opening_cash=shift.opening_cash_php,
+            from_dispatches=treasurer_view["from_dispatches_php"],
+            dispatches_out=treasurer_view["dispatches_out_php"],
+            from_cashier=treasurer_view["from_cashier_php"],
+            bale_peso=treasurer_view["bale_peso_php"],
+            inter_branch_in=treasurer_view["inter_branch_in_php"],
+            inter_branch_out=treasurer_view["inter_branch_out_php"],
+            vault_returns=treasurer_view["vault_returns_php"],
+            expenses=treasurer_view["expenses_php"],
+            cheques_cleared=treasurer_view["cheques_cleared_php"],
         )
         variance = compute_variance(body.closing_cash_php, expected)
     else:

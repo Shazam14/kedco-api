@@ -10,7 +10,7 @@ from app.models.transaction import Transaction, PaymentStatus, PaymentMode, TxnP
 from app.models.currency import Currency, DailyPosition
 from app.models.user import User, UserRole
 from app.models.credit import SpecialCredit, CreditInstallment, CreditStatus
-from app.models.shift import SafeMovement, TellerShift, ShiftStatus, CashReplenishment
+from app.models.shift import SafeMovement, TellerShift, ShiftStatus, CashReplenishment, InterBranchOutflow
 from app.models.expense import Expense, ExpenseStatus
 from app.api.v1.auth import require_role, TokenData
 from app.services.shifts import compute_expected_cash_treasurer
@@ -362,6 +362,11 @@ async def get_daily_report(
             .filter(CashReplenishment.source == "INTER_BRANCH")
             .all()
         ), 2) if treasurer_shift_ids else 0.0
+        inter_branch_out_php = round(sum(
+            o.amount_php for o in db.query(InterBranchOutflow)
+            .filter(InterBranchOutflow.shift_id.in_(treasurer_shift_ids))
+            .all()
+        ), 2) if treasurer_shift_ids else 0.0
         # Signed net of treasurer-actor vault movements: + = drawer→vault deposit,
         # − = vault→drawer withdrawal. Formula subtracts this so withdrawals add
         # to closing peso (cash arrived in drawer) and deposits subtract (cash left).
@@ -426,6 +431,7 @@ async def get_daily_report(
     else:
         bale_php = 0.0
         inter_branch_in_php = 0.0
+        inter_branch_out_php = 0.0
         vault_returns_php = 0.0
         expenses_php = 0.0
         cheques_cleared_php = 0.0
@@ -445,6 +451,7 @@ async def get_daily_report(
             from_cashier=from_cashier_php,
             bale_peso=bale_php,
             inter_branch_in=inter_branch_in_php,
+            inter_branch_out=inter_branch_out_php,
             vault_returns=vault_returns_php,
             expenses=expenses_php,
             cheques_cleared=cheques_cleared_php,
@@ -491,6 +498,7 @@ async def get_daily_report(
             "closing_is_live": closing_is_live,
             "bale_php": bale_php,
             "inter_branch_in_php": inter_branch_in_php,
+            "inter_branch_out_php": inter_branch_out_php,
             "vault_returns_php": vault_returns_php,
             "cheques_cleared_php": cheques_cleared_php,
             "expenses_php": expenses_php,

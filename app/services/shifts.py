@@ -36,6 +36,7 @@ def compute_expected_cash_treasurer(
     from_cashier: float = 0.0,
     bale_peso: float = 0.0,
     inter_branch_in: float = 0.0,
+    inter_branch_out: float = 0.0,
     vault_returns: float = 0.0,
     expenses: float = 0.0,
     cheques_cleared: float = 0.0,
@@ -49,6 +50,7 @@ def compute_expected_cash_treasurer(
         + from_cashier                        cashier shift-close handoffs
         + bale_peso                           vault → drawer (treasurer pulled cash)
         + inter_branch_in                     other branch → this drawer
+        − inter_branch_out                    this drawer → other branch
         − vault_returns                       signed net of vault movements
                                               (+ = drawer→vault deposit,
                                                − = vault→drawer withdrawal)
@@ -63,7 +65,7 @@ def compute_expected_cash_treasurer(
         opening_cash
         + from_dispatches - dispatches_out
         + from_cashier
-        + bale_peso + inter_branch_in - vault_returns
+        + bale_peso + inter_branch_in - inter_branch_out - vault_returns
         + cheques_cleared - expenses,
         2,
     )

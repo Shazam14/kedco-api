@@ -554,14 +554,16 @@ async def get_peso_merly(
             agg = _treasurer_aggregates(shift, db)
             if agg is not None:
                 expected = compute_expected_cash_treasurer(
-                    shift.opening_cash_php,
-                    agg["from_dispatches_php"],
-                    agg["dispatches_out_php"],
-                    agg["from_cashier_php"],
-                    agg["bale_peso_php"],
-                    agg["vault_returns_php"],
-                    agg["expenses_php"],
-                    agg["cheques_cleared_php"],
+                    opening_cash=shift.opening_cash_php,
+                    from_dispatches=agg["from_dispatches_php"],
+                    dispatches_out=agg["dispatches_out_php"],
+                    from_cashier=agg["from_cashier_php"],
+                    bale_peso=agg["bale_peso_php"],
+                    inter_branch_in=agg["inter_branch_in_php"],
+                    inter_branch_out=agg["inter_branch_out_php"],
+                    vault_returns=agg["vault_returns_php"],
+                    expenses=agg["expenses_php"],
+                    cheques_cleared=agg["cheques_cleared_php"],
                 )
 
         lines.append(TreasurerLine(

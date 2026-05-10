@@ -30,6 +30,18 @@ class ReplenishmentOut(BaseModel):
     added_at: datetime
 
 
+class InterBranchOutIn(BaseModel):
+    amount_php: float
+    note: Optional[str] = None
+
+
+class InterBranchOutflowOut(BaseModel):
+    id: str
+    amount_php: float
+    note: Optional[str] = None
+    sent_at: datetime
+
+
 class ShiftOut(BaseModel):
     id: str
     date: date
@@ -56,6 +68,7 @@ class ShiftOut(BaseModel):
     # petty cash spent from the till this shift (PENDING + APPROVED expenses)
     total_petty_cash_php: Optional[float] = None
     replenishments: Optional[List[ReplenishmentOut]] = None
+    inter_branch_outflows: Optional[List[InterBranchOutflowOut]] = None
     # treasurer-shift aggregates — populated when the shift owner has role=supervisor.
     # Cashier shifts get nulls; UI flips on `is_treasurer_shift`.
     is_treasurer_shift: Optional[bool] = None
@@ -66,6 +79,7 @@ class ShiftOut(BaseModel):
     from_cashier_php: Optional[float] = None
     bale_peso_php: Optional[float] = None
     inter_branch_in_php: Optional[float] = None
+    inter_branch_out_php: Optional[float] = None
     vault_returns_php: Optional[float] = None
     expenses_php: Optional[float] = None
     cheques_cleared_php: Optional[float] = None
