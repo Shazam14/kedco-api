@@ -93,6 +93,14 @@ async def close_day(
         # See feedback_than_excel_rounding.md.
         rounded_avg = round(result.daily_avg_cost, currency_dp.get(code, 4))
 
+        # Re-stamp THAN on today's SELLs against the full-day weighted avg.
+        # Without this, late-arriving BUYs (rider entries, edit-request
+        # approvals, backdating) leave each SELL's THAN computed against a
+        # stale partial-day cost. Mirrors scripts/recompute_than.py.
+        for s in sold_by_currency.get(code, []):
+            s.daily_avg_cost = rounded_avg
+            s.than = round((s.rate - rounded_avg) * s.foreign_amt, 2)
+
         carry_forward.append({
             "currency_code":  code,
             "carry_in_qty":   max(remaining_qty, 0),
