@@ -44,6 +44,7 @@ def compute_expected_cash_treasurer(
     peso_ken_out: float = 0.0,
     vale_in: float = 0.0,
     vale_out: float = 0.0,
+    cashier_floats_out: float = 0.0,
 ) -> float:
     """
     Expected physical cash in the treasurer's drawer at any moment.
@@ -59,6 +60,7 @@ def compute_expected_cash_treasurer(
         − peso_ken_out                        this drawer → Ken's float
         + vale_in                             investor IOU → this drawer
         − vale_out                            this drawer → investor (paying back)
+        − cashier_floats_out                  this drawer → cashier opening floats
         − vault_returns                       signed net of vault movements
                                               (+ = drawer→vault deposit,
                                                − = vault→drawer withdrawal)
@@ -76,6 +78,7 @@ def compute_expected_cash_treasurer(
         + bale_peso + inter_branch_in - inter_branch_out - vault_returns
         + peso_ken_in - peso_ken_out
         + vale_in - vale_out
+        - cashier_floats_out
         + cheques_cleared - expenses,
         2,
     )

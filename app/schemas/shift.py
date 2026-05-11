@@ -102,3 +102,4 @@ class ShiftOut(BaseModel):
     peso_ken_out_php: Optional[float] = None
     vale_in_php: Optional[float] = None
     vale_out_php: Optional[float] = None
+    cashier_floats_out_php: Optional[float] = None

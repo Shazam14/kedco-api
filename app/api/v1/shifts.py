@@ -4,7 +4,7 @@ from sqlalchemy import func
 from datetime import datetime, date
 
 from app.core.database import get_db
-from app.models.shift import TellerShift, ShiftStatus, CashReplenishment, SafeMovement, InterBranchOutflow
+from app.models.shift import TellerShift, ShiftStatus, CashReplenishment, SafeMovement, InterBranchOutflow, TreasurerFloat
 from app.models.transaction import Transaction, TxnPayment, PaymentMode, PaymentStatus, RiderDispatch, DispatchStatus
 from app.models.expense import Expense, ExpenseStatus
 from app.models.user import User, UserRole
@@ -166,6 +166,16 @@ def _treasurer_aggregates(shift: TellerShift, db: Session) -> dict | None:
     )
     cheques_cleared_php = sum(p.amount_php for p in cleared_cheques)
 
+    # Cashier opening floats handed out by THIS treasurer on this date.
+    # Each row's amount is the latest assignment (overwrites in place), so
+    # summing gives the cash that physically left her drawer to cashiers.
+    cashier_floats_out = sum(
+        f.amount_php for f in db.query(TreasurerFloat)
+        .filter(TreasurerFloat.date == shift.date)
+        .filter(TreasurerFloat.treasurer_username == shift.cashier)
+        .all()
+    )
+
     return {
         "overall_total_bought_php": round(overall_bought, 2),
         "overall_total_sold_php":   round(overall_sold, 2),
@@ -179,6 +189,7 @@ def _treasurer_aggregates(shift: TellerShift, db: Session) -> dict | None:
         "peso_ken_out_php":         round(peso_ken_out, 2),
         "vale_in_php":              round(vale_in, 2),
         "vale_out_php":             round(vale_out, 2),
+        "cashier_floats_out_php":   round(cashier_floats_out, 2),
         "vault_returns_php":        round(vault_returns, 2),
         "expenses_php":             round(expenses_php, 2),
         "cheques_cleared_php":      round(cheques_cleared_php, 2),
@@ -260,6 +271,7 @@ def _shift_to_out(shift: TellerShift, db: Session) -> ShiftOut:
         peso_ken_out_php=treasurer_view["peso_ken_out_php"]                 if treasurer_view else None,
         vale_in_php=treasurer_view["vale_in_php"]                           if treasurer_view else None,
         vale_out_php=treasurer_view["vale_out_php"]                         if treasurer_view else None,
+        cashier_floats_out_php=treasurer_view["cashier_floats_out_php"]     if treasurer_view else None,
     )
 
 
@@ -544,6 +556,7 @@ async def close_shift(
             peso_ken_out=treasurer_view["peso_ken_out_php"],
             vale_in=treasurer_view["vale_in_php"],
             vale_out=treasurer_view["vale_out_php"],
+            cashier_floats_out=treasurer_view["cashier_floats_out_php"],
         )
         variance = compute_variance(body.closing_cash_php, expected)
     else:

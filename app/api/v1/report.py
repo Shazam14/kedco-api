@@ -10,7 +10,7 @@ from app.models.transaction import Transaction, PaymentStatus, PaymentMode, TxnP
 from app.models.currency import Currency, DailyPosition
 from app.models.user import User, UserRole
 from app.models.credit import SpecialCredit, CreditInstallment, CreditStatus
-from app.models.shift import SafeMovement, TellerShift, ShiftStatus, CashReplenishment, InterBranchOutflow
+from app.models.shift import SafeMovement, TellerShift, ShiftStatus, CashReplenishment, InterBranchOutflow, TreasurerFloat
 from app.models.expense import Expense, ExpenseStatus
 from app.api.v1.auth import require_role, TokenData
 from app.services.shifts import compute_expected_cash_treasurer
@@ -453,6 +453,13 @@ async def get_daily_report(
             if later is None:
                 last_per_terminal.append(cs)
         from_cashier_php = round(sum(s.closing_cash_php or 0 for s in last_per_terminal), 2)
+        # Cashier opening floats handed out by treasurers on this date.
+        cashier_floats_out_php = round(sum(
+            f.amount_php for f in db.query(TreasurerFloat)
+            .filter(TreasurerFloat.date == target)
+            .filter(TreasurerFloat.treasurer_username.in_(treasurer_username_list))
+            .all()
+        ), 2)
     else:
         bale_php = 0.0
         inter_branch_in_php = 0.0
@@ -467,6 +474,7 @@ async def get_daily_report(
         rider_remits_php = 0.0
         dispatched_out_php = 0.0
         from_cashier_php = 0.0
+        cashier_floats_out_php = 0.0
 
     # Live closing fallback: when a treasurer shift exists but isn't closed yet
     # (no closing_cash_php and no expected_cash_php written), project the closing
@@ -488,6 +496,7 @@ async def get_daily_report(
             peso_ken_out=peso_ken_out_php,
             vale_in=vale_in_php,
             vale_out=vale_out_php,
+            cashier_floats_out=cashier_floats_out_php,
         )
         closing_is_live = True
 
@@ -536,6 +545,7 @@ async def get_daily_report(
             "peso_ken_out_php": peso_ken_out_php,
             "vale_in_php": vale_in_php,
             "vale_out_php": vale_out_php,
+            "cashier_floats_out_php": cashier_floats_out_php,
             "vault_returns_php": vault_returns_php,
             "cheques_cleared_php": cheques_cleared_php,
             "expenses_php": expenses_php,
