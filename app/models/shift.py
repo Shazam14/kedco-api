@@ -69,15 +69,18 @@ class SafeMovement(Base):
 
 
 class InterBranchOutflow(Base):
-    """Cash sent from this drawer to another branch. Drawer-negative; vault not involved."""
+    """Cash leaving the drawer (not via vault). destination='BRANCH' = another
+    branch; destination='PESO_KEN' = returned to Ken's personal float (paired
+    with a +amount row in peso_ken_entries)."""
     __tablename__ = "inter_branch_outflows"
 
-    id         = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    shift_id   = Column(UUID(as_uuid=True), ForeignKey("teller_shifts.id", ondelete="CASCADE"), nullable=False, index=True)
-    amount_php = Column(Float, nullable=False)
-    note       = Column(String(300), nullable=True)
-    sent_at    = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    shift      = relationship("TellerShift", back_populates="inter_branch_outflows")
+    id          = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    shift_id    = Column(UUID(as_uuid=True), ForeignKey("teller_shifts.id", ondelete="CASCADE"), nullable=False, index=True)
+    amount_php  = Column(Float, nullable=False)
+    note        = Column(String(300), nullable=True)
+    destination = Column(String(20), nullable=False, server_default="BRANCH")
+    sent_at     = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    shift       = relationship("TellerShift", back_populates="inter_branch_outflows")
 
 
 class TreasurerFloat(Base):

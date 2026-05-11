@@ -39,7 +39,13 @@ class InterBranchOutflowOut(BaseModel):
     id: str
     amount_php: float
     note: Optional[str] = None
+    destination: Optional[str] = "BRANCH"
     sent_at: datetime
+
+
+class PesoKenOutIn(BaseModel):
+    amount_php: float
+    note: Optional[str] = None
 
 
 class ShiftOut(BaseModel):
@@ -83,3 +89,5 @@ class ShiftOut(BaseModel):
     vault_returns_php: Optional[float] = None
     expenses_php: Optional[float] = None
     cheques_cleared_php: Optional[float] = None
+    peso_ken_in_php: Optional[float] = None
+    peso_ken_out_php: Optional[float] = None

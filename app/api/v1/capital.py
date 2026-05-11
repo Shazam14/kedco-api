@@ -564,6 +564,8 @@ async def get_peso_merly(
                     vault_returns=agg["vault_returns_php"],
                     expenses=agg["expenses_php"],
                     cheques_cleared=agg["cheques_cleared_php"],
+                    peso_ken_in=agg["peso_ken_in_php"],
+                    peso_ken_out=agg["peso_ken_out_php"],
                 )
 
         lines.append(TreasurerLine(

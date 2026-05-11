@@ -199,6 +199,64 @@ def test_bale_peso_only_safe_sourced_replenishments(client, db, supervisor_user)
     assert body["total_replenishment_php"] == 530_000
 
 
+def test_replenish_from_peso_ken_pairs_with_negative_ledger_entry(client, db, supervisor_user):
+    """FROM KEN: drawer-positive replenishment + Ken's ledger drops by same amount."""
+    from app.models.capital import PesoKenEntry
+    _open_shift(db, cashier=supervisor_user.username)
+
+    res = client.post(
+        "/api/v1/shifts/replenish",
+        headers=auth_header(supervisor_user.username, "supervisor"),
+        json={"amount_php": 75_000, "source": "PESO_KEN", "note": "from Ken"},
+    )
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["peso_ken_in_php"] == 75_000
+    assert body["bale_peso_php"] == 0   # not double-counted as vault pull
+
+    ken_rows = db.query(PesoKenEntry).filter(PesoKenEntry.created_by == supervisor_user.username).all()
+    assert len(ken_rows) == 1
+    assert ken_rows[0].amount_php == -75_000   # Ken's float drops
+
+
+def test_peso_ken_out_endpoint_drawer_negative_and_positive_ledger(client, db, supervisor_user):
+    """TO KEN: drawer-negative outflow + Ken's ledger rises by same amount."""
+    from app.models.capital import PesoKenEntry
+    _open_shift(db, cashier=supervisor_user.username, opening=200_000)
+
+    res = client.post(
+        "/api/v1/shifts/peso-ken-out",
+        headers=auth_header(supervisor_user.username, "supervisor"),
+        json={"amount_php": 40_000, "note": "returning float"},
+    )
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["peso_ken_out_php"] == 40_000
+    assert body["inter_branch_out_php"] == 0   # branch bucket untouched
+
+    ken_rows = db.query(PesoKenEntry).filter(PesoKenEntry.created_by == supervisor_user.username).all()
+    assert len(ken_rows) == 1
+    assert ken_rows[0].amount_php == 40_000   # Ken's float rises
+
+
+def test_inter_branch_out_endpoint_does_not_touch_peso_ken_ledger(client, db, supervisor_user):
+    """Existing SEND TO BRANCH must not write to Ken's ledger."""
+    from app.models.capital import PesoKenEntry
+    _open_shift(db, cashier=supervisor_user.username, opening=200_000)
+
+    res = client.post(
+        "/api/v1/shifts/inter-branch-out",
+        headers=auth_header(supervisor_user.username, "supervisor"),
+        json={"amount_php": 100_000, "note": "to CTS"},
+    )
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["inter_branch_out_php"] == 100_000
+    assert body["peso_ken_out_php"] == 0
+
+    assert db.query(PesoKenEntry).count() == 0
+
+
 def test_window_under_date_override_uses_operational_date(client, db, supervisor_user, make_dispatch):
     """Date override: shift opened on a physical day after its operational date.
     Movements timestamped (wall-clock) before opened_at but on the operational

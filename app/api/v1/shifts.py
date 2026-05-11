@@ -8,7 +8,8 @@ from app.models.shift import TellerShift, ShiftStatus, CashReplenishment, SafeMo
 from app.models.transaction import Transaction, TxnPayment, PaymentMode, PaymentStatus, RiderDispatch, DispatchStatus
 from app.models.expense import Expense, ExpenseStatus
 from app.models.user import User, UserRole
-from app.schemas.shift import ShiftOpenIn, ShiftCloseIn, ReplenishIn, ShiftOut, ReplenishmentOut, InterBranchOutIn, InterBranchOutflowOut
+from app.models.capital import PesoKenEntry
+from app.schemas.shift import ShiftOpenIn, ShiftCloseIn, ReplenishIn, ShiftOut, ReplenishmentOut, InterBranchOutIn, InterBranchOutflowOut, PesoKenOutIn
 from app.api.v1.auth import require_role, TokenData
 from app.core.today import get_today
 from app.services.shifts import compute_expected_cash, compute_variance, compute_expected_cash_treasurer
@@ -111,8 +112,11 @@ def _treasurer_aggregates(shift: TellerShift, db: Session) -> dict | None:
     bale_peso = sum(r.amount_php for r in shift.replenishments if r.source == "SAFE")
     # Cash received from another branch (drawer-positive, vault not involved).
     inter_branch_in = sum(r.amount_php for r in shift.replenishments if r.source == "INTER_BRANCH")
-    # Cash sent to another branch (drawer-negative, vault not involved).
-    inter_branch_out = sum(o.amount_php for o in shift.inter_branch_outflows)
+    # Cash pulled from Ken's personal float into the drawer (positive).
+    peso_ken_in = sum(r.amount_php for r in shift.replenishments if r.source == "PESO_KEN")
+    # Drawer outflows split by destination (BRANCH vs PESO_KEN).
+    inter_branch_out = sum(o.amount_php for o in shift.inter_branch_outflows if (o.destination or "BRANCH") == "BRANCH")
+    peso_ken_out = sum(o.amount_php for o in shift.inter_branch_outflows if o.destination == "PESO_KEN")
 
     # Signed net of vault movements by this treasurer during her shift window.
     # + = drawer→vault deposit, − = vault→drawer withdrawal. Formula subtracts
@@ -168,6 +172,8 @@ def _treasurer_aggregates(shift: TellerShift, db: Session) -> dict | None:
         "bale_peso_php":            round(bale_peso, 2),
         "inter_branch_in_php":      round(inter_branch_in, 2),
         "inter_branch_out_php":     round(inter_branch_out, 2),
+        "peso_ken_in_php":          round(peso_ken_in, 2),
+        "peso_ken_out_php":         round(peso_ken_out, 2),
         "vault_returns_php":        round(vault_returns, 2),
         "expenses_php":             round(expenses_php, 2),
         "cheques_cleared_php":      round(cheques_cleared_php, 2),
@@ -227,7 +233,10 @@ def _shift_to_out(shift: TellerShift, db: Session) -> ShiftOut:
             for r in shift.replenishments
         ],
         inter_branch_outflows=[
-            InterBranchOutflowOut(id=str(o.id), amount_php=o.amount_php, note=o.note, sent_at=o.sent_at)
+            InterBranchOutflowOut(
+                id=str(o.id), amount_php=o.amount_php, note=o.note,
+                destination=o.destination or "BRANCH", sent_at=o.sent_at,
+            )
             for o in shift.inter_branch_outflows
         ],
         is_treasurer_shift=treasurer_view is not None,
@@ -242,6 +251,8 @@ def _shift_to_out(shift: TellerShift, db: Session) -> ShiftOut:
         vault_returns_php=treasurer_view["vault_returns_php"]               if treasurer_view else None,
         expenses_php=treasurer_view["expenses_php"]                         if treasurer_view else None,
         cheques_cleared_php=treasurer_view["cheques_cleared_php"]           if treasurer_view else None,
+        peso_ken_in_php=treasurer_view["peso_ken_in_php"]                   if treasurer_view else None,
+        peso_ken_out_php=treasurer_view["peso_ken_out_php"]                 if treasurer_view else None,
     )
 
 
@@ -301,7 +312,7 @@ async def replenish_cash(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No open shift found for today.")
 
     source = (body.source or "TREASURER_FLOAT").upper()
-    if source not in {"TREASURER_FLOAT", "SAFE", "INTER_BRANCH", "EXTERNAL", "OTHER"}:
+    if source not in {"TREASURER_FLOAT", "SAFE", "INTER_BRANCH", "PESO_KEN", "EXTERNAL", "OTHER"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid source: {source}")
 
     replenishment = CashReplenishment(
@@ -321,6 +332,15 @@ async def replenish_cash(
             actor_username=current_user.username,
             related_replenishment_id=replenishment.id,
             movement_date=today,
+        ))
+    elif source == "PESO_KEN":
+        # Pulling cash from Ken's float into drawer: Ken's ledger drops by the
+        # same amount so the admin Peso Ken total stays in sync.
+        db.add(PesoKenEntry(
+            amount_php=-abs(body.amount_php),
+            note=body.note or "From Ken → drawer",
+            entry_date=today,
+            created_by=current_user.username,
         ))
 
     db.commit()
@@ -354,6 +374,47 @@ async def send_inter_branch(
         shift_id=shift.id,
         amount_php=body.amount_php,
         note=body.note,
+        destination="BRANCH",
+    ))
+    db.commit()
+    db.refresh(shift)
+
+    return _shift_to_out(shift, db)
+
+
+@router.post("/peso-ken-out", response_model=ShiftOut)
+async def return_to_peso_ken(
+    body: PesoKenOutIn,
+    current_user: TokenData = Depends(require_role("supervisor")),
+    db: Session = Depends(get_db),
+):
+    """Treasurer returns cash from her drawer to Ken's personal float.
+    Drawer-negative; pairs with a +amount row in peso_ken_entries so Ken's
+    admin ledger stays in sync."""
+    today = get_today()
+
+    shift = db.query(TellerShift).filter_by(
+        cashier=current_user.username,
+        date=today,
+        status=ShiftStatus.OPEN,
+    ).first()
+    if not shift:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No open shift found for today.")
+
+    if body.amount_php <= 0:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Amount must be positive.")
+
+    db.add(InterBranchOutflow(
+        shift_id=shift.id,
+        amount_php=body.amount_php,
+        note=body.note,
+        destination="PESO_KEN",
+    ))
+    db.add(PesoKenEntry(
+        amount_php=abs(body.amount_php),
+        note=body.note or "Drawer → Ken",
+        entry_date=today,
+        created_by=current_user.username,
     ))
     db.commit()
     db.refresh(shift)
@@ -409,6 +470,8 @@ async def close_shift(
             vault_returns=treasurer_view["vault_returns_php"],
             expenses=treasurer_view["expenses_php"],
             cheques_cleared=treasurer_view["cheques_cleared_php"],
+            peso_ken_in=treasurer_view["peso_ken_in_php"],
+            peso_ken_out=treasurer_view["peso_ken_out_php"],
         )
         variance = compute_variance(body.closing_cash_php, expected)
     else:

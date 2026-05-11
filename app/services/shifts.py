@@ -40,6 +40,8 @@ def compute_expected_cash_treasurer(
     vault_returns: float = 0.0,
     expenses: float = 0.0,
     cheques_cleared: float = 0.0,
+    peso_ken_in: float = 0.0,
+    peso_ken_out: float = 0.0,
 ) -> float:
     """
     Expected physical cash in the treasurer's drawer at any moment.
@@ -51,6 +53,8 @@ def compute_expected_cash_treasurer(
         + bale_peso                           vault → drawer (treasurer pulled cash)
         + inter_branch_in                     other branch → this drawer
         − inter_branch_out                    this drawer → other branch
+        + peso_ken_in                         Ken's float → this drawer
+        − peso_ken_out                        this drawer → Ken's float
         − vault_returns                       signed net of vault movements
                                               (+ = drawer→vault deposit,
                                                − = vault→drawer withdrawal)
@@ -66,6 +70,7 @@ def compute_expected_cash_treasurer(
         + from_dispatches - dispatches_out
         + from_cashier
         + bale_peso + inter_branch_in - inter_branch_out - vault_returns
+        + peso_ken_in - peso_ken_out
         + cheques_cleared - expenses,
         2,
     )
