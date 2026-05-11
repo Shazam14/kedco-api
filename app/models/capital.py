@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Float, Date, DateTime
+from sqlalchemy import Column, String, Float, Date, DateTime, Boolean, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 import uuid
@@ -53,6 +53,45 @@ class PesoKenEntry(Base):
     entry_date    = Column(Date, nullable=False, index=True)
     created_by    = Column(String(50), nullable=False)
     created_at    = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class ValeParty(Base):
+    """
+    External party who lends or receives cash via VALE (informal IOU). Each
+    party gets its own running balance from the sum of signed vale_entries.
+    + entries = cash they sent us; − entries = cash we returned to them.
+
+    investor_id is a soft link to `investors`: when populated, this party is
+    also an investor — Ken's total exposure to them is capital + outstanding
+    vale. Nullable because not every vale party is an investor.
+    """
+    __tablename__ = "vale_parties"
+
+    id          = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name        = Column(String(80), nullable=False, unique=True, index=True)
+    note        = Column(String(300), nullable=True)
+    investor_id = Column(UUID(as_uuid=True), ForeignKey("investors.id", ondelete="SET NULL"), nullable=True, index=True)
+    is_active   = Column(Boolean, nullable=False, server_default="true")
+    created_by  = Column(String(50), nullable=False)
+    created_at  = Column(DateTime(timezone=True), server_default=func.now())
+
+
+class ValeEntry(Base):
+    """
+    Signed ledger of a VALE party's running balance. Paired with either a
+    CashReplenishment(source='VALE', +amount) when cash comes INTO the
+    drawer from the party, or an InterBranchOutflow(destination='VALE',
+    -amount) when cash is returned TO the party. Mirrors PesoKenEntry.
+    """
+    __tablename__ = "vale_entries"
+
+    id         = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    party_id   = Column(UUID(as_uuid=True), ForeignKey("vale_parties.id", ondelete="RESTRICT"), nullable=False, index=True)
+    amount_php = Column(Float, nullable=False)                # signed
+    note       = Column(String(300), nullable=True)
+    entry_date = Column(Date, nullable=False, index=True)
+    created_by = Column(String(50), nullable=False)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 
 class MiscEntry(Base):

@@ -7,7 +7,7 @@ from app.models.shift import TellerShift
 from app.models.credit import SpecialCredit, CreditInstallment
 from app.models.passbook import PassbookEntry
 from app.models.expense import Expense
-from app.models.capital import PhpCapitalEntry, BranchCapital, PesoKenEntry, MiscEntry
+from app.models.capital import PhpCapitalEntry, BranchCapital, PesoKenEntry, MiscEntry, ValeParty, ValeEntry
 from app.models.investor import Investor
 from app.models.customer import Customer
 from app.models.edit_request import TransactionEditRequest

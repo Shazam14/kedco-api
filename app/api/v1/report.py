@@ -368,6 +368,12 @@ async def get_daily_report(
             .filter(CashReplenishment.source == "PESO_KEN")
             .all()
         ), 2) if treasurer_shift_ids else 0.0
+        vale_in_php = round(sum(
+            r.amount_php for r in db.query(CashReplenishment)
+            .filter(CashReplenishment.shift_id.in_(treasurer_shift_ids))
+            .filter(CashReplenishment.source == "VALE")
+            .all()
+        ), 2) if treasurer_shift_ids else 0.0
         inter_branch_out_php = round(sum(
             o.amount_php for o in db.query(InterBranchOutflow)
             .filter(InterBranchOutflow.shift_id.in_(treasurer_shift_ids))
@@ -378,6 +384,12 @@ async def get_daily_report(
             o.amount_php for o in db.query(InterBranchOutflow)
             .filter(InterBranchOutflow.shift_id.in_(treasurer_shift_ids))
             .filter(InterBranchOutflow.destination == "PESO_KEN")
+            .all()
+        ), 2) if treasurer_shift_ids else 0.0
+        vale_out_php = round(sum(
+            o.amount_php for o in db.query(InterBranchOutflow)
+            .filter(InterBranchOutflow.shift_id.in_(treasurer_shift_ids))
+            .filter(InterBranchOutflow.destination == "VALE")
             .all()
         ), 2) if treasurer_shift_ids else 0.0
         # Signed net of treasurer-actor vault movements: + = drawer→vault deposit,
@@ -447,6 +459,8 @@ async def get_daily_report(
         inter_branch_out_php = 0.0
         peso_ken_in_php = 0.0
         peso_ken_out_php = 0.0
+        vale_in_php = 0.0
+        vale_out_php = 0.0
         vault_returns_php = 0.0
         expenses_php = 0.0
         cheques_cleared_php = 0.0
@@ -472,6 +486,8 @@ async def get_daily_report(
             cheques_cleared=cheques_cleared_php,
             peso_ken_in=peso_ken_in_php,
             peso_ken_out=peso_ken_out_php,
+            vale_in=vale_in_php,
+            vale_out=vale_out_php,
         )
         closing_is_live = True
 
@@ -518,6 +534,8 @@ async def get_daily_report(
             "inter_branch_out_php": inter_branch_out_php,
             "peso_ken_in_php": peso_ken_in_php,
             "peso_ken_out_php": peso_ken_out_php,
+            "vale_in_php": vale_in_php,
+            "vale_out_php": vale_out_php,
             "vault_returns_php": vault_returns_php,
             "cheques_cleared_php": cheques_cleared_php,
             "expenses_php": expenses_php,

@@ -20,6 +20,8 @@ class ReplenishIn(BaseModel):
     note: Optional[str] = None
     # Where the cash came from. SAFE writes a paired safe_movement(-amount).
     source: Optional[str] = "TREASURER_FLOAT"
+    # Required when source='VALE' — which party's IOU this inflow is from.
+    party_id: Optional[str] = None
 
 
 class ReplenishmentOut(BaseModel):
@@ -45,6 +47,13 @@ class InterBranchOutflowOut(BaseModel):
 
 class PesoKenOutIn(BaseModel):
     amount_php: float
+    note: Optional[str] = None
+
+
+class ValeOutIn(BaseModel):
+    """Treasurer returns cash from drawer to a vale party (paying back IOU)."""
+    amount_php: float
+    party_id: str
     note: Optional[str] = None
 
 
@@ -91,3 +100,5 @@ class ShiftOut(BaseModel):
     cheques_cleared_php: Optional[float] = None
     peso_ken_in_php: Optional[float] = None
     peso_ken_out_php: Optional[float] = None
+    vale_in_php: Optional[float] = None
+    vale_out_php: Optional[float] = None
