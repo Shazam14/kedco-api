@@ -10,7 +10,7 @@ from app.models.shift import TreasurerFloat, TellerShift, ShiftStatus
 from app.models.transaction import Transaction, TxnPayment, PaymentMode
 from app.models.user import User
 from app.api.v1.auth import require_role, TokenData
-from app.core.today import get_today
+from app.core.today import get_today, get_mock_date
 
 router = APIRouter(prefix="/treasurer", tags=["treasurer"])
 
@@ -197,7 +197,8 @@ async def clear_cheque(
     if payment.cleared_at is not None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cheque already cleared")
 
-    payment.cleared_at = datetime.now()
+    mock = get_mock_date()
+    payment.cleared_at = datetime(mock.year, mock.month, mock.day, 6, 0, 0) if mock else datetime.now()
     payment.cleared_by = current_user.username
     db.commit()
     db.refresh(payment)
