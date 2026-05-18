@@ -12,6 +12,7 @@ from app.models.transaction import Transaction, TxnPayment, RiderDispatch, Dispa
 from app.models.audit import AuditLog
 from app.models.currency import DailyRate, DailyPosition
 from app.models.customer import Customer
+from app.models.user import User
 from app.schemas.forex import (
     TransactionIn, TransactionOut, TransactionPatch, TransactionBatchIn,
     PaymentSliceIn, PaymentSliceOut,
@@ -22,22 +23,47 @@ from app.api.v1.auth import require_role, TokenData
 router = APIRouter(prefix="/transactions", tags=["transactions"])
 
 
-def _active_rider_dispatch(db: Session, rider_username: str, today_date) -> RiderDispatch:
-    """Return the rider's IN_FIELD dispatch for today, or 400 if none.
+def _active_rider_dispatch(
+    db: Session, rider_username: str, today_date, txn_type: str
+) -> RiderDispatch:
+    """Return the rider's IN_FIELD dispatch for today.
 
-    Riders cannot record txns without an active dispatch — this is the gate that
-    makes the rider's screen reset to zero after each remit.
+    SELL: any IN_FIELD dispatch works (real or ghost). If none exists, auto-create
+    a ghost (cash_php=0, is_ghost=True) so SELL proceeds stay scoped + remit works.
+
+    BUY: requires a real (non-ghost) IN_FIELD dispatch. A ghost has no PHP carry,
+    so the rider physically can't BUY — 400 with a "get dispatch first" hint.
     """
     dispatch = db.query(RiderDispatch).filter_by(
         date=today_date,
         rider_username=rider_username,
         status=DispatchStatus.IN_FIELD,
     ).first()
+
+    if txn_type == "BUY":
+        if not dispatch or dispatch.is_ghost:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Cannot BUY without an active dispatch — ask admin to dispatch you with PHP first.",
+            )
+        return dispatch
+
+    # SELL (and any other non-BUY rider txn type): allow + auto-create ghost.
     if not dispatch:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="No active dispatch — ask admin to dispatch you before recording transactions.",
+        rider = db.query(User).filter_by(username=rider_username, role="rider").first()
+        rider_name = (rider.full_name if rider and rider.full_name else rider_username)
+        dispatch = RiderDispatch(
+            id=uuid.uuid4(),
+            date=today_date,
+            rider_username=rider_username,
+            rider_name=rider_name,
+            status=DispatchStatus.IN_FIELD,
+            dispatch_time=datetime.now().strftime("%I:%M %p"),
+            cash_php=0,
+            is_ghost=True,
         )
+        db.add(dispatch)
+        db.flush()
     return dispatch
 
 
@@ -215,7 +241,7 @@ async def create_transaction(
     txn_id = f"{prefix}-{uuid.uuid4().hex[:8].upper()}"
 
     dispatch_id = (
-        _active_rider_dispatch(db, current_user.username, today).id
+        _active_rider_dispatch(db, current_user.username, today, txn.type).id
         if txn.source == "RIDER" else None
     )
 
@@ -286,7 +312,7 @@ async def create_batch_transaction(
     slice_status = "PENDING" if pending else "RECEIVED"
     id_prefix = "RD" if is_rider else "OR"
     dispatch_id = (
-        _active_rider_dispatch(db, current_user.username, today).id
+        _active_rider_dispatch(db, current_user.username, today, batch.type).id
         if is_rider else None
     )
     now_dt = datetime.now()

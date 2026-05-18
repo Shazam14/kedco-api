@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Float, Date, DateTime, Enum, ForeignKey, Integer
+from sqlalchemy import Column, String, Float, Date, DateTime, Enum, ForeignKey, Integer, Boolean
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -131,6 +131,10 @@ class RiderDispatch(Base):
     remit_php     = Column(Float, nullable=True)
     notes         = Column(String(200), nullable=True)
     dispatched_by = Column(String(50), nullable=True)
+    # Auto-created on the rider's first SELL-without-dispatch so SELLs stay scoped.
+    # Admin's POST /dispatches promotes a ghost (sets is_ghost=False, fills cash_php).
+    # BUY is gated against is_ghost=True (a ghost has no PHP carry).
+    is_ghost      = Column(Boolean, default=False, nullable=False, server_default="false")
     created_at    = Column(DateTime(timezone=True), server_default=func.now())
     updated_at    = Column(DateTime(timezone=True), onupdate=func.now())
 

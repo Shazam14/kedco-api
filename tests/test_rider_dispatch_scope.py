@@ -49,7 +49,7 @@ class TestDispatchScope:
             },
         )
         assert r.status_code == 400
-        assert "No active dispatch" in r.json()["detail"]
+        assert "Cannot BUY without an active dispatch" in r.json()["detail"]
 
     def test_rider_today_filters_by_active_dispatch(self, client, rider_user, make_dispatch, usd_setup, db):
         # Dispatch A — record one txn, then remit (close dispatch A).
@@ -93,6 +93,95 @@ class TestDispatchScope:
         assert r.status_code == 201, r.text
         txn = db.query(Transaction).filter_by(id=r.json()[0]["id"]).first()
         assert txn.dispatch_id == d.id
+
+    def test_sell_without_dispatch_auto_creates_ghost(self, client, rider_user, usd_setup, db):
+        r = client.post(
+            "/api/v1/transactions/",
+            headers=auth_header("ridertest", "rider"),
+            json={
+                "type": "SELL", "source": "RIDER",
+                "currency": "USD", "foreign_amt": 100, "rate": 58.0,
+                "payment_mode": "CASH", "cashier": "ridertest",
+            },
+        )
+        assert r.status_code == 201, r.text
+        txn = db.query(Transaction).filter_by(id=r.json()["id"]).first()
+        assert txn.dispatch_id is not None
+        ghost = db.query(RiderDispatch).filter_by(id=txn.dispatch_id).first()
+        assert ghost.is_ghost is True
+        assert ghost.cash_php == 0
+        assert ghost.status == DispatchStatus.IN_FIELD
+
+    def test_buy_blocked_when_only_ghost_dispatch_exists(self, client, rider_user, usd_setup, db):
+        # First SELL creates the ghost.
+        client.post(
+            "/api/v1/transactions/",
+            headers=auth_header("ridertest", "rider"),
+            json={"type": "SELL", "source": "RIDER", "currency": "USD",
+                  "foreign_amt": 100, "rate": 58.0, "payment_mode": "CASH", "cashier": "ridertest"},
+        )
+        # Now BUY should 400.
+        r = client.post(
+            "/api/v1/transactions/",
+            headers=auth_header("ridertest", "rider"),
+            json={"type": "BUY", "source": "RIDER", "currency": "USD",
+                  "foreign_amt": 50, "rate": 57.0, "payment_mode": "CASH", "cashier": "ridertest"},
+        )
+        assert r.status_code == 400
+        assert "Cannot BUY without an active dispatch" in r.json()["detail"]
+
+    def test_batch_buy_blocked_with_ghost(self, client, rider_user, usd_setup, db):
+        client.post(
+            "/api/v1/transactions/",
+            headers=auth_header("ridertest", "rider"),
+            json={"type": "SELL", "source": "RIDER", "currency": "USD",
+                  "foreign_amt": 100, "rate": 58.0, "payment_mode": "CASH", "cashier": "ridertest"},
+        )
+        r = client.post(
+            "/api/v1/transactions/batch",
+            headers=auth_header("ridertest", "rider"),
+            json={
+                "type": "BUY", "source": "RIDER", "customer": "Ana",
+                "payment_mode": "CASH",
+                "items": [{"currency": "USD", "foreign_amt": 100, "rate": 57.0}],
+            },
+        )
+        assert r.status_code == 400
+
+    def test_admin_dispatch_promotes_ghost(self, client, admin_user, rider_user, usd_setup, db):
+        # Rider creates ghost via SELL.
+        sr = client.post(
+            "/api/v1/transactions/",
+            headers=auth_header("ridertest", "rider"),
+            json={"type": "SELL", "source": "RIDER", "currency": "USD",
+                  "foreign_amt": 100, "rate": 58.0, "payment_mode": "CASH", "cashier": "ridertest"},
+        )
+        sell_id = sr.json()["id"]
+        ghost_id = db.query(Transaction).filter_by(id=sell_id).first().dispatch_id
+
+        # Admin formally dispatches — should promote the ghost, NOT 400.
+        dr = client.post(
+            "/api/v1/rider/dispatches",
+            headers=auth_header("admintest", "admin"),
+            json={"rider_username": "ridertest", "cash_php": 300_000, "items": []},
+        )
+        assert dr.status_code == 201, dr.text
+        promoted = db.query(RiderDispatch).filter_by(id=ghost_id).first()
+        assert promoted.is_ghost is False
+        assert promoted.cash_php == 300_000
+        assert promoted.dispatched_by == "admintest"
+
+        # Prior SELL still linked to the (now-promoted) dispatch.
+        assert db.query(Transaction).filter_by(id=sell_id).first().dispatch_id == ghost_id
+
+        # BUY should now work.
+        br = client.post(
+            "/api/v1/transactions/",
+            headers=auth_header("ridertest", "rider"),
+            json={"type": "BUY", "source": "RIDER", "currency": "USD",
+                  "foreign_amt": 50, "rate": 57.0, "payment_mode": "CASH", "cashier": "ridertest"},
+        )
+        assert br.status_code == 201, br.text
 
     def test_admin_today_unscoped_by_dispatch(self, client, admin_user, rider_user, make_dispatch, usd_setup, db):
         # Rider records under Dispatch A, then remits.

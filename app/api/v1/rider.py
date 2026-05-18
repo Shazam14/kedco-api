@@ -65,6 +65,7 @@ class DispatchOut(BaseModel):
     topups: list[TopupOut] = []
     notes: Optional[str]
     dispatched_by: Optional[str]
+    is_ghost: bool = False
 
     class Config:
         from_attributes = True
@@ -131,22 +132,33 @@ def dispatch_rider(
     existing = db.query(RiderDispatch).filter_by(
         date=get_today(), rider_username=data.rider_username, status=DispatchStatus.IN_FIELD
     ).first()
-    if existing:
+
+    if existing and not existing.is_ghost:
         raise HTTPException(400, f"{data.rider_username} is already dispatched today")
 
-    dispatch = RiderDispatch(
-        id=uuid.uuid4(),
-        date=get_today(),
-        rider_username=data.rider_username,
-        rider_name=rider.full_name or rider.username,
-        status=DispatchStatus.IN_FIELD,
-        dispatch_time=datetime.now().strftime("%I:%M %p"),
-        cash_php=total_cash_php,
-        notes=data.notes,
-        dispatched_by=current_user.username,
-    )
-    db.add(dispatch)
-    db.flush()
+    if existing and existing.is_ghost:
+        # Promote ghost → real dispatch. Prior SELL txns stay linked via dispatch_id;
+        # their proceeds now correctly flow inside the real dispatch's PHP balance.
+        existing.is_ghost     = False
+        existing.cash_php     = total_cash_php
+        existing.dispatch_time= datetime.now().strftime("%I:%M %p")
+        existing.notes        = data.notes
+        existing.dispatched_by= current_user.username
+        dispatch = existing
+    else:
+        dispatch = RiderDispatch(
+            id=uuid.uuid4(),
+            date=get_today(),
+            rider_username=data.rider_username,
+            rider_name=rider.full_name or rider.username,
+            status=DispatchStatus.IN_FIELD,
+            dispatch_time=datetime.now().strftime("%I:%M %p"),
+            cash_php=total_cash_php,
+            notes=data.notes,
+            dispatched_by=current_user.username,
+        )
+        db.add(dispatch)
+        db.flush()
 
     for item in forex_items:
         db.add(RiderDispatchItem(
@@ -383,6 +395,7 @@ def _dispatch_out(d: RiderDispatch, db: Session) -> DispatchOut:
         ) for t in topups],
         notes=d.notes,
         dispatched_by=d.dispatched_by,
+        is_ghost=bool(d.is_ghost),
     )
 
 def _borrow_out(b: RiderBorrow) -> BorrowOut:
