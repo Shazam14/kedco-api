@@ -103,3 +103,4 @@ class ShiftOut(BaseModel):
     vale_in_php: Optional[float] = None
     vale_out_php: Optional[float] = None
     cashier_floats_out_php: Optional[float] = None
+    counter_sells_net_php: Optional[float] = None

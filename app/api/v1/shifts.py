@@ -176,6 +176,21 @@ def _treasurer_aggregates(shift: TellerShift, db: Session) -> dict | None:
         .all()
     )
 
+    # Treasurer-direct counter txns: when the treasurer sells/buys at her own
+    # window (no rider dispatch, no separate cashier shift), the PHP moves
+    # straight in/out of her drawer. PENDING excluded — no cash yet.
+    counter_txns = (
+        db.query(Transaction)
+        .filter(Transaction.date == shift.date)
+        .filter(Transaction.cashier == shift.cashier)
+        .filter(Transaction.source == "COUNTER")
+        .all()
+    )
+    counter_sells_net = sum(
+        (t.php_amt if t.type == "SELL" else -t.php_amt)
+        for t in counter_txns if received(t)
+    )
+
     return {
         "overall_total_bought_php": round(overall_bought, 2),
         "overall_total_sold_php":   round(overall_sold, 2),
@@ -193,6 +208,7 @@ def _treasurer_aggregates(shift: TellerShift, db: Session) -> dict | None:
         "vault_returns_php":        round(vault_returns, 2),
         "expenses_php":             round(expenses_php, 2),
         "cheques_cleared_php":      round(cheques_cleared_php, 2),
+        "counter_sells_net_php":    round(counter_sells_net, 2),
     }
 
 
@@ -272,6 +288,7 @@ def _shift_to_out(shift: TellerShift, db: Session) -> ShiftOut:
         vale_in_php=treasurer_view["vale_in_php"]                           if treasurer_view else None,
         vale_out_php=treasurer_view["vale_out_php"]                         if treasurer_view else None,
         cashier_floats_out_php=treasurer_view["cashier_floats_out_php"]     if treasurer_view else None,
+        counter_sells_net_php=treasurer_view["counter_sells_net_php"]       if treasurer_view else None,
     )
 
 
@@ -557,6 +574,7 @@ async def close_shift(
             vale_in=treasurer_view["vale_in_php"],
             vale_out=treasurer_view["vale_out_php"],
             cashier_floats_out=treasurer_view["cashier_floats_out_php"],
+            counter_sells_net=treasurer_view["counter_sells_net_php"],
         )
         variance = compute_variance(body.closing_cash_php, expected)
     else:

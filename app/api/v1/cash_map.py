@@ -63,6 +63,7 @@ def _open_shift_expected(shift: TellerShift, db: Session, is_treasurer: bool) ->
             vale_in=agg["vale_in_php"],
             vale_out=agg["vale_out_php"],
             cashier_floats_out=agg["cashier_floats_out_php"],
+            counter_sells_net=agg["counter_sells_net_php"],
         )
     # Cashier shift
     txns = db.query(Transaction).filter_by(

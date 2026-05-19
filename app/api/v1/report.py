@@ -460,6 +460,17 @@ async def get_daily_report(
             .filter(TreasurerFloat.treasurer_username.in_(treasurer_username_list))
             .all()
         ), 2)
+        # Treasurer-direct counter txns (signed: + SELL php, − BUY php).
+        # Cash moves straight in/out of her drawer with no rider/cashier mediator.
+        counter_sells_net_php = round(sum(
+            (t.php_amt if t.type == "SELL" else -t.php_amt)
+            for t in db.query(Transaction)
+            .filter(Transaction.date == target)
+            .filter(Transaction.cashier.in_(treasurer_username_list))
+            .filter(Transaction.source == "COUNTER")
+            .filter(Transaction.payment_status != PaymentStatus.PENDING)
+            .all()
+        ), 2)
     else:
         bale_php = 0.0
         inter_branch_in_php = 0.0
@@ -475,6 +486,7 @@ async def get_daily_report(
         dispatched_out_php = 0.0
         from_cashier_php = 0.0
         cashier_floats_out_php = 0.0
+        counter_sells_net_php = 0.0
 
     # Live closing fallback: when a treasurer shift exists but isn't closed yet
     # (no closing_cash_php and no expected_cash_php written), project the closing
@@ -497,6 +509,7 @@ async def get_daily_report(
             vale_in=vale_in_php,
             vale_out=vale_out_php,
             cashier_floats_out=cashier_floats_out_php,
+            counter_sells_net=counter_sells_net_php,
         )
         closing_is_live = True
 
@@ -552,6 +565,7 @@ async def get_daily_report(
             "rider_remits_php": rider_remits_php,
             "dispatched_out_php": dispatched_out_php,
             "from_cashier_php": from_cashier_php,
+            "counter_sells_net_php": counter_sells_net_php,
         },
         "transactions": [
             {

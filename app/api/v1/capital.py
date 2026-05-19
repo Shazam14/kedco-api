@@ -566,6 +566,7 @@ async def get_peso_merly(
                     cheques_cleared=agg["cheques_cleared_php"],
                     peso_ken_in=agg["peso_ken_in_php"],
                     peso_ken_out=agg["peso_ken_out_php"],
+                    counter_sells_net=agg["counter_sells_net_php"],
                 )
 
         lines.append(TreasurerLine(

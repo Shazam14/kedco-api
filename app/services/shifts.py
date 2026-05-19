@@ -45,6 +45,7 @@ def compute_expected_cash_treasurer(
     vale_in: float = 0.0,
     vale_out: float = 0.0,
     cashier_floats_out: float = 0.0,
+    counter_sells_net: float = 0.0,
 ) -> float:
     """
     Expected physical cash in the treasurer's drawer at any moment.
@@ -66,6 +67,8 @@ def compute_expected_cash_treasurer(
                                                − = vault→drawer withdrawal)
         + cheques_cleared                     cheques confirmed cleared today
         − expenses                            treasurer-bucket expenses (non-shift petty)
+        + counter_sells_net                   treasurer-direct counter txns
+                                              (signed: SELL php − BUY php)
 
     Sign convention is drawer-physical: bale ADDS (cash arrived in drawer),
     vault returns SUBTRACT (cash left drawer). Compare against Eunice's manual
@@ -79,6 +82,7 @@ def compute_expected_cash_treasurer(
         + peso_ken_in - peso_ken_out
         + vale_in - vale_out
         - cashier_floats_out
-        + cheques_cleared - expenses,
+        + cheques_cleared - expenses
+        + counter_sells_net,
         2,
     )
