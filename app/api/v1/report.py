@@ -14,6 +14,7 @@ from app.models.shift import SafeMovement, TellerShift, ShiftStatus, CashRepleni
 from app.models.expense import Expense, ExpenseStatus
 from app.api.v1.auth import require_role, TokenData
 from app.services.shifts import compute_expected_cash_treasurer
+from app.services.payments import received_php as _slice_received_php, pending_php as _slice_pending_php
 
 router = APIRouter(prefix="/report", tags=["report"])
 
@@ -42,21 +43,8 @@ async def get_daily_report(
 
     currencies = {c.code: c for c in db.query(Currency).all()}
 
-    # ── Per-slice helpers ────────────────────────────────────────────────
-    # Phase 4: PENDING is per-slice. A SELL with CASH-RECEIVED + GCASH-PENDING
-    # is half-pending, not all-pending. Pre-split fallback: parent.payment_status
-    # is authoritative if no slices exist (defensive — Phase 1 backfilled all).
-    def _slice_pending_php(t):
-        if t.payments:
-            return sum(p.amount_php for p in t.payments if p.status == PaymentStatus.PENDING)
-        return t.php_amt if t.payment_status == PaymentStatus.PENDING else 0.0
-
-    def _slice_received_php(t):
-        if t.payments:
-            return sum(p.amount_php for p in t.payments if p.status == PaymentStatus.RECEIVED)
-        return t.php_amt if t.payment_status != PaymentStatus.PENDING else 0.0
-
-    received = lambda t: t.payment_status != PaymentStatus.PENDING
+    # Slice-aware money math: see app/services/payments.py. PENDING is per-slice,
+    # so a SELL with CASH-RECEIVED + CHEQUE-PENDING is half-pending, not all-pending.
 
     # ── By currency ──────────────────────────────────────────────────────
     # Stock quantity flows on physical handover (PENDING included — the rider
@@ -119,10 +107,15 @@ async def get_daily_report(
             else (t.official_rate - t.rate) * t.foreign_amt
 
     # ── By cashier ───────────────────────────────────────────────────────
+    # Slice-aware: a partially-pending txn contributes its RECEIVED share to
+    # the cashier's totals; than/commission scale by received_share so the
+    # cash leg of a split is visible even before the cheque clears.
     by_cashier: dict[str, dict] = {}
     for t in txns:
-        if not received(t):
+        received_amt = _slice_received_php(t)
+        if received_amt <= 0:
             continue
+        share = received_amt / t.php_amt if t.php_amt > 0 else 0.0
         name = t.cashier
         if name not in by_cashier:
             by_cashier[name] = {
@@ -133,12 +126,12 @@ async def get_daily_report(
             }
         if t.type == "BUY":
             by_cashier[name]["buy_count"] += 1
-            by_cashier[name]["buy_php"]   += t.php_amt
+            by_cashier[name]["buy_php"]   += received_amt
         else:
             by_cashier[name]["sell_count"] += 1
-            by_cashier[name]["sell_php"]   += t.php_amt
-            by_cashier[name]["than"]       += t.than
-        by_cashier[name]["commission"] += _comm(t)
+            by_cashier[name]["sell_php"]   += received_amt
+            by_cashier[name]["than"]       += t.than * share
+        by_cashier[name]["commission"] += _comm(t) * share
 
     # ── Totals ───────────────────────────────────────────────────────────
     # SELL totals + THAN are ACCRUAL (include PENDING) to match Excel grand
@@ -148,7 +141,10 @@ async def get_daily_report(
     total_bought       = sum(_slice_received_php(t) for t in txns if t.type == "BUY")
     total_sold         = sum(t.php_amt for t in txns if t.type == "SELL")
     total_than         = sum(t.than   for t in txns)
-    total_commission   = sum(_comm(t) for t in txns if received(t))
+    total_commission   = sum(
+        _comm(t) * (_slice_received_php(t) / t.php_amt) if t.php_amt > 0 else 0.0
+        for t in txns
+    )
     total_sold_pending = sum(_slice_pending_php(t) for t in txns if t.type == "SELL")
     total_than_pending = sum(
         (t.than * (_slice_pending_php(t) / t.php_amt)) if t.php_amt > 0 else 0.0
@@ -342,9 +338,20 @@ async def get_daily_report(
         last = treasurer_shifts[-1]
         closing_raw = last.closing_cash_php if last.closing_cash_php is not None else last.expected_cash_php
         closing_php = round(closing_raw, 2) if closing_raw is not None else None
+        # Expected + variance only populated once the shift is actually CLOSED.
+        # Drives GAP_CHECK row in the report so any declared-vs-system mismatch
+        # stays visible until someone reconciles it.
+        if last.status == ShiftStatus.CLOSED:
+            expected_php = round(last.expected_cash_php, 2) if last.expected_cash_php is not None else None
+            variance_php = round(last.cash_variance,     2) if last.cash_variance     is not None else None
+        else:
+            expected_php = None
+            variance_php = None
     else:
         opening_php = None
         closing_php = None
+        expected_php = None
+        variance_php = None
     # Live flag only flips True after we've computed the live projection below.
     closing_is_live = False
 
@@ -462,14 +469,16 @@ async def get_daily_report(
         ), 2)
         # Treasurer-direct counter txns (signed: + SELL php, − BUY php).
         # Cash moves straight in/out of her drawer with no rider/cashier mediator.
-        counter_sells_net_php = round(sum(
-            (t.php_amt if t.type == "SELL" else -t.php_amt)
-            for t in db.query(Transaction)
+        _counter_txns = (
+            db.query(Transaction)
             .filter(Transaction.date == target)
             .filter(Transaction.cashier.in_(treasurer_username_list))
             .filter(Transaction.source == "COUNTER")
-            .filter(Transaction.payment_status != PaymentStatus.PENDING)
             .all()
+        )
+        counter_sells_net_php = round(sum(
+            (_slice_received_php(t) if t.type == "SELL" else -_slice_received_php(t))
+            for t in _counter_txns
         ), 2)
     else:
         bale_php = 0.0
@@ -550,6 +559,8 @@ async def get_daily_report(
         "peso": {
             "opening_php": opening_php,
             "closing_php": closing_php,
+            "expected_php": expected_php,
+            "variance_php": variance_php,
             "closing_is_live": closing_is_live,
             "bale_php": bale_php,
             "inter_branch_in_php": inter_branch_in_php,
