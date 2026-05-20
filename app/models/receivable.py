@@ -13,7 +13,7 @@ class PendingReceivable(Base):
     FX txn flow — these are stale receivables tracked in the treasurer's
     notebook, not slices on existing SELL transactions.
 
-    Status:  PENDING (default)  | CLEARED   | BAD_DEBT
+    Status:  PENDING (default)  | CLEARED   | NEEDS_REVIEW
     Method:  CHEQUE | GCASH | PNB | TRANSFER | WALKIN | UNKNOWN
     Bank:    GPO    | CBC   | MBTC
     """

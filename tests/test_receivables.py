@@ -1,7 +1,7 @@
 """
 Pending Receivables — standalone ledger of cheques/GCash/PNB transfers
 sitting in three bank inboxes (GPO / CBC / MBTC), with status transitions
-(PENDING / CLEARED / BAD_DEBT).
+(PENDING / CLEARED / NEEDS_REVIEW).
 
 Lives outside FX txn flow; admin + supervisor only.
 """
@@ -97,7 +97,7 @@ class TestReceivablesStatusTransitions:
         assert r3.json()["cleared_at"] is None
         assert r3.json()["cleared_by"] is None
 
-    def test_bad_debt_status(self, client, admin_user):
+    def test_needs_review_status(self, client, admin_user):
         r = client.post("/api/v1/receivables/",
                         json=_create_payload(customer_name="Faith",
                                              amount_php=145_050.0,
@@ -106,10 +106,10 @@ class TestReceivablesStatusTransitions:
                         headers=auth_header("admintest", "admin"))
         rid = r.json()["id"]
         r2 = client.patch(f"/api/v1/receivables/{rid}",
-                          json={"status": "BAD_DEBT"},
+                          json={"status": "NEEDS_REVIEW"},
                           headers=auth_header("admintest", "admin"))
         assert r2.status_code == 200
-        assert r2.json()["status"] == "BAD_DEBT"
+        assert r2.json()["status"] == "NEEDS_REVIEW"
         assert r2.json()["cleared_at"] is None
 
     def test_invalid_status_rejected(self, client, admin_user):

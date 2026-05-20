@@ -16,7 +16,7 @@ router = APIRouter(prefix="/receivables", tags=["receivables"])
 
 _METHODS = {"CHEQUE", "GCASH", "PNB", "TRANSFER", "WALKIN", "UNKNOWN"}
 _BANKS   = {"GPO", "CBC", "MBTC"}
-_STATUSES = {"PENDING", "CLEARED", "BAD_DEBT"}
+_STATUSES = {"PENDING", "CLEARED", "NEEDS_REVIEW"}
 
 
 class ReceivableIn(BaseModel):

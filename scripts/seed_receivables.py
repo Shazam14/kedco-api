@@ -4,7 +4,7 @@ Seed pending_receivables from excel_files/cheque.txt.
 Idempotent: skips rows where an entry already exists with the same
 (customer_name, amount_php, bank_account). Run once after migration.
 
-Faith → BAD_DEBT (marked "no payment" on the source).
+Faith → NEEDS_REVIEW (marked "no payment" on the source).
 Other entries default to PENDING.
 """
 from __future__ import annotations
@@ -49,7 +49,7 @@ ENTRIES: list[tuple[str, float, str, str, str | None, str, str | None]] = [
     ("Jeoffrey",      27_400.00, "UNKNOWN",  "CBC", None,         "PENDING", None),
     ("Kenneth",       39_200.00, "CHEQUE",   "CBC", None,         "PENDING", None),
     ("Home builders", 22_500.00, "CHEQUE",   "CBC", None,         "PENDING", None),
-    ("Faith",        145_050.00, "UNKNOWN",  "CBC", None,         "BAD_DEBT", "no payment"),
+    ("Faith",        145_050.00, "UNKNOWN",  "CBC", None,         "NEEDS_REVIEW", "no payment"),
     ("Gloria",        18_800.00, "UNKNOWN",  "CBC", None,         "PENDING", None),
     ("Cts",            2_725.00, "UNKNOWN",  "CBC", "2026-05-16", "PENDING", None),
     ("Senyor",        77_800.00, "UNKNOWN",  "CBC", "2026-05-18", "PENDING", None),
