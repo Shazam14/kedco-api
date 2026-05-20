@@ -12,3 +12,4 @@ from app.models.investor import Investor
 from app.models.customer import Customer
 from app.models.edit_request import TransactionEditRequest
 from app.models.audit import AuditLog
+from app.models.receivable import PendingReceivable
