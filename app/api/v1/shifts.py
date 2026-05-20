@@ -9,8 +9,10 @@ from app.models.transaction import Transaction, TxnPayment, PaymentMode, Payment
 from app.models.expense import Expense, ExpenseStatus
 from app.models.user import User, UserRole
 from app.models.capital import PesoKenEntry, ValeParty, ValeEntry
-from app.schemas.shift import ShiftOpenIn, ShiftCloseIn, ReplenishIn, ShiftOut, ReplenishmentOut, InterBranchOutIn, InterBranchOutflowOut, PesoKenOutIn, ValeOutIn
+from app.models.audit import AuditLog
+from app.schemas.shift import ShiftOpenIn, ShiftCloseIn, ReplenishIn, ShiftOut, ReplenishmentOut, InterBranchOutIn, InterBranchOutflowOut, PesoKenOutIn, ValeOutIn, ReconciliationPatchIn
 from app.api.v1.auth import require_role, TokenData
+import uuid
 from app.core.today import get_today
 from app.services.shifts import compute_expected_cash, compute_variance, compute_expected_cash_treasurer
 from app.services.payments import received_php as _slice_received, received_share as _received_share
@@ -627,3 +629,52 @@ async def get_today_shifts(
         .all()
     )
     return [_shift_to_out(s, db) for s in shifts]
+
+
+_RECON_STATUSES = {"PENDING", "NOTED", "RESOLVED"}
+
+
+@router.patch("/{shift_id}/reconciliation")
+async def update_reconciliation(
+    shift_id: str,
+    payload: ReconciliationPatchIn,
+    current_user: TokenData = Depends(require_role("admin", "supervisor")),
+    db: Session = Depends(get_db),
+):
+    """GAP_CHECK Phase 2 — annotate the variance on a closed shift.
+
+    `note` is freeform. `status` defaults to NOTED when a note is present and
+    no explicit status is given; otherwise honors the payload. RESOLVED is the
+    sign-off state (Merly/admin has decided what the gap was, no further work).
+    """
+    shift = db.query(TellerShift).filter(TellerShift.id == shift_id).first()
+    if not shift:
+        raise HTTPException(status_code=404, detail="Shift not found")
+
+    new_status = payload.status
+    if new_status is None:
+        new_status = "NOTED" if (payload.note or "").strip() else (shift.reconciliation_status or "PENDING")
+    if new_status not in _RECON_STATUSES:
+        raise HTTPException(status_code=400, detail=f"Invalid status. Must be one of: {sorted(_RECON_STATUSES)}")
+
+    old = {"note": shift.reconciliation_note, "status": shift.reconciliation_status}
+    shift.reconciliation_note = (payload.note or "").strip() or None
+    shift.reconciliation_status = new_status
+    new = {"note": shift.reconciliation_note, "status": shift.reconciliation_status}
+
+    db.add(AuditLog(
+        id=uuid.uuid4(),
+        table_name="teller_shifts",
+        record_id=str(shift.id),
+        action="UPDATE",
+        changed_by=current_user.username,
+        old_value=old,
+        new_value=new,
+        note="reconciliation",
+    ))
+    db.commit()
+    return {
+        "id": str(shift.id),
+        "reconciliation_note": shift.reconciliation_note,
+        "reconciliation_status": shift.reconciliation_status,
+    }

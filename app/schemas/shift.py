@@ -57,6 +57,12 @@ class ValeOutIn(BaseModel):
     note: Optional[str] = None
 
 
+class ReconciliationPatchIn(BaseModel):
+    """GAP_CHECK Phase 2 — patch the note and/or status on a closed shift's variance."""
+    note: Optional[str] = None
+    status: Optional[str] = None  # PENDING | NOTED | RESOLVED
+
+
 class ShiftOut(BaseModel):
     id: str
     date: date

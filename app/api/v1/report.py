@@ -347,11 +347,18 @@ async def get_daily_report(
         else:
             expected_php = None
             variance_php = None
+        # GAP_CHECK Phase 2 fields — annotated against the latest treasurer shift.
+        reconciliation_shift_id = str(last.id)
+        reconciliation_note     = last.reconciliation_note
+        reconciliation_status   = last.reconciliation_status or "PENDING"
     else:
         opening_php = None
         closing_php = None
         expected_php = None
         variance_php = None
+        reconciliation_shift_id = None
+        reconciliation_note     = None
+        reconciliation_status   = None
     # Live flag only flips True after we've computed the live projection below.
     closing_is_live = False
 
@@ -562,6 +569,9 @@ async def get_daily_report(
             "expected_php": expected_php,
             "variance_php": variance_php,
             "closing_is_live": closing_is_live,
+            "reconciliation_shift_id": reconciliation_shift_id,
+            "reconciliation_note":     reconciliation_note,
+            "reconciliation_status":   reconciliation_status,
             "bale_php": bale_php,
             "inter_branch_in_php": inter_branch_in_php,
             "inter_branch_out_php": inter_branch_out_php,

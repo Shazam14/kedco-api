@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, Float, Date, DateTime, Enum, Boolean, ForeignKey
+from sqlalchemy import Column, String, Float, Date, DateTime, Enum, Boolean, ForeignKey, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
@@ -35,6 +35,10 @@ class TellerShift(Base):
     notes             = Column(String(300), nullable=True)
     terminal_id       = Column(String(50), nullable=True)
     branch_id         = Column(String(20), nullable=True)
+    # GAP_CHECK Phase 2 — admin/treasurer annotates the variance.
+    # status: PENDING (gap exists, no note) | NOTED (note added) | RESOLVED (signed off)
+    reconciliation_note   = Column(Text, nullable=True)
+    reconciliation_status = Column(String(20), nullable=False, server_default="PENDING")
     created_at        = Column(DateTime(timezone=True), server_default=func.now())
     replenishments    = relationship("CashReplenishment", back_populates="shift", order_by="CashReplenishment.added_at")
     inter_branch_outflows = relationship("InterBranchOutflow", back_populates="shift", order_by="InterBranchOutflow.sent_at")
