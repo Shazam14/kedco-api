@@ -26,7 +26,7 @@ from app.models.transaction import Transaction, TxnType
 from app.models.currency import DailyPosition
 
 CODE_MAP   = {'NTD': 'TWD', 'QR': 'QAR', 'KD': 'KWD'}
-SKIP_CODES = {'BHD', 'BND', 'OMR'}
+SKIP_CODES = {'BHD', 'OMR'}  # BND activated 2026-05-16
 
 PAIRS_2ND = [
     ('AED',1,2), ('AUD',3,4), ('CAD',5,6), ('CHF',7,8),
@@ -59,9 +59,11 @@ def ws(wb, name):
     for s in wb.sheetnames:
         if _n(s) == n:
             return wb[s]
-    n2 = n.replace('buy', 'bu')
+    def _c(s):
+        return _n(s).replace('buy', 'bu').replace('second', '2nd')
+    nc = _c(name)
     for s in wb.sheetnames:
-        if _n(s).replace('buy', 'bu') == n2:
+        if _c(s) == nc:
             return wb[s]
     raise KeyError(f"Sheet '{name}' not found. Available: {wb.sheetnames}")
 
@@ -151,22 +153,30 @@ def main():
       + parse_pairs(ws(wb, 'SELL x OTHERS'), PAIRS_OTHERS, 1, True)
     )
 
-    # Determine carry-in set for stripping
+    # Determine carry-in dict for stripping (match seed_from_xlsx semantics)
     if prev_xlsx:
         prev_wb = openpyxl.load_workbook(prev_xlsx, data_only=True)
         carry_in = read_stocksleft(prev_wb)
         prev_wb.close()
-        carry_in_set = {(code, qty, rate) for code, (qty, rate) in carry_in.items()}
     else:
         db = SessionLocal()
         try:
             pos_rows = db.query(DailyPosition).filter_by(date=target_date).all()
-            carry_in_set = {(p.currency_code, p.carry_in_qty, p.carry_in_rate) for p in pos_rows}
+            carry_in = {p.currency_code: (p.carry_in_qty, p.carry_in_rate) for p in pos_rows}
         finally:
             db.close()
 
+    # Match BUY row to carry-in on (code, qty) + 0.5% rate tolerance.
+    def is_carry_in(c, q, r):
+        if c not in carry_in:
+            return False
+        cq, cr = carry_in[c]
+        if cq != q:
+            return False
+        return cr == r or abs(cr - r) / max(abs(cr), 1e-9) < 0.005
+
     # Strip carry-in rows from buys
-    buys_clean = [(c, q, r) for c, q, r in raw_buys if (c, q, r) not in carry_in_set]
+    buys_clean = [(c, q, r) for c, q, r in raw_buys if not is_carry_in(c, q, r)]
     stripped = len(raw_buys) - len(buys_clean)
     if stripped:
         print(f"\n  Stripped {stripped} carry-in row(s) from Excel BUYs")

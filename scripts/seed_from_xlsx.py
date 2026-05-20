@@ -32,7 +32,7 @@ from app.models.currency import DailyRate, DailyPosition
 from app.models.transaction import Transaction, TxnType, TxnSource
 
 CODE_MAP   = {'NTD': 'TWD', 'QR': 'QAR', 'KD': 'KWD'}
-SKIP_CODES = {'BHD', 'BND', 'OMR'}  # TYR activated 2026-04-25
+SKIP_CODES = {'BHD', 'OMR'}  # TYR activated 2026-04-25, BND activated 2026-05-16
 
 PAIRS_2ND = [
     ('AED',1,2), ('AUD',3,4), ('CAD',5,6), ('CHF',7,8),
@@ -153,10 +153,12 @@ def main():
         for s in wb.sheetnames:
             if norm(s) == n:
                 return wb[s]
-        # Handle 'BU' typo for 'BUY' (and vice-versa)
-        n2 = n.replace('buy', 'bu')
+        # Handle 'BU' typo for 'BUY' (and vice-versa) + 'SECOND' / '2ND' synonym
+        def canon(s):
+            return norm(s).replace('buy', 'bu').replace('second', '2nd')
+        nc = canon(name)
         for s in wb.sheetnames:
-            if norm(s).replace('buy', 'bu') == n2:
+            if canon(s) == nc:
                 return wb[s]
         raise KeyError(f"Worksheet '{name}' not found in {wb.sheetnames}")
 
@@ -191,20 +193,27 @@ def main():
     # Each BUY sheet has the previous day's carry-in as a summary row (same qty/rate as
     # DailyPosition). Strip any BUY that exactly matches a carry_in entry so it isn't
     # double-counted. When prev_xlsx is absent, fall back to existing DB positions.
-    if carry_in:
-        carry_in_set = {(code, qty, rate) for code, (qty, rate) in carry_in.items()}
-    else:
+    if not carry_in:
         _db = SessionLocal()
         try:
             _pos = _db.query(DailyPosition).filter_by(date=target_date).all()
-            carry_in_set = {(p.currency_code, p.carry_in_qty, p.carry_in_rate) for p in _pos}
             # Preserve carry_in so --force can recreate positions after wiping them
             carry_in = {p.currency_code: (p.carry_in_qty, p.carry_in_rate) for p in _pos}
         finally:
             _db.close()
 
-    if carry_in_set:
-        buy_clean = [(typ, c, q, r) for typ, c, q, r in buy if (c, q, r) not in carry_in_set]
+    # Match BUY row to carry-in on (code, qty) + 0.5% rate tolerance.
+    # STOCKSLEFT rates are sometimes rounded vs the BUY-sheet rate (e.g. 75.83 vs 75.833).
+    def is_carry_in(c, q, r):
+        if c not in carry_in:
+            return False
+        cq, cr = carry_in[c]
+        if cq != q:
+            return False
+        return cr == r or abs(cr - r) / max(abs(cr), 1e-9) < 0.005
+
+    if carry_in:
+        buy_clean = [(typ, c, q, r) for typ, c, q, r in buy if not is_carry_in(c, q, r)]
         removed = len(buy) - len(buy_clean)
         if removed:
             print(f"  Stripped {removed} carry-in BUY row(s) from parsed transactions")

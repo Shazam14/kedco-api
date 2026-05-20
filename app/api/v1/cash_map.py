@@ -28,17 +28,12 @@ from app.models.user import User, UserRole
 from app.api.v1.auth import require_role, TokenData
 from app.api.v1.shifts import _treasurer_aggregates, _comm
 from app.services.shifts import compute_expected_cash, compute_expected_cash_treasurer
+from app.services.payments import received_php as _slice_received, received_share as _received_share
 
 router = APIRouter(prefix="/cash-map", tags=["cash-map"])
 
 _cache: dict = {}
 _CACHE_TTL = 30  # seconds
-
-
-def _slice_received(t: Transaction) -> float:
-    if t.payments:
-        return sum(p.amount_php for p in t.payments if p.status == PaymentStatus.RECEIVED)
-    return t.php_amt if t.payment_status != PaymentStatus.PENDING else 0.0
 
 
 def _open_shift_expected(shift: TellerShift, db: Session, is_treasurer: bool) -> float:
@@ -71,7 +66,7 @@ def _open_shift_expected(shift: TellerShift, db: Session, is_treasurer: bool) ->
     ).all()
     sold = sum(_slice_received(t) for t in txns if t.type == TxnType.SELL)
     bought = sum(_slice_received(t) for t in txns if t.type == TxnType.BUY)
-    comm = sum(_comm(t) for t in txns if t.payment_status != PaymentStatus.PENDING)
+    comm = sum(_comm(t) * _received_share(t) for t in txns)
     replen = sum(r.amount_php for r in shift.replenishments)
     petty_rows = db.query(Expense).filter(
         Expense.shift_id == shift.id,

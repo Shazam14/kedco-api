@@ -10,6 +10,7 @@ from app.models.shift import TellerShift, ShiftStatus
 from app.models.user import User
 from app.schemas.forex import DashboardSummaryOut, CurrencyPositionOut, TransactionOut, CapitalTrendPoint
 from app.services.forex import compute_position, CarryIn, TodayBuy
+from app.services.payments import received_php as _slice_received, received_share as _received_share
 from app.api.v1.auth import get_current_user, TokenData
 from app.core.today import get_today
 
@@ -86,20 +87,9 @@ async def get_dashboard_summary(
         .filter(~Transaction.cashier.in_(demo_users))
         .all()
     )
-    # PENDING is per-slice (Phase 4): a SELL with a CASH-RECEIVED + GCASH-PENDING
-    # split contributes the cash slice to total_sold and the proportional cash-share
-    # of than. Pre-split fallback uses parent.payment_status (defensive).
-    def _slice_received(t):
-        if t.payments:
-            return sum(p.amount_php for p in t.payments if p.status == PaymentStatus.RECEIVED)
-        return t.php_amt if t.payment_status != PaymentStatus.PENDING else 0.0
-
-    def _received_share(t):
-        if t.php_amt <= 0:
-            return 0.0
-        return _slice_received(t) / t.php_amt
-
-    received = lambda t: t.payment_status != PaymentStatus.PENDING
+    # PENDING is per-slice: a SELL with CASH-RECEIVED + CHEQUE-PENDING contributes
+    # the cash slice to total_sold and the proportional cash-share of than.
+    # See app/services/payments.py for the canonical helpers.
     total_than   = sum(t.than * _received_share(t) for t in sells_today)
     total_bought = sum(_slice_received(t) for t in buys_today  if t.type == "BUY")
     total_sold   = sum(_slice_received(t) for t in sells_today)

@@ -13,6 +13,7 @@ from app.schemas.shift import ShiftOpenIn, ShiftCloseIn, ReplenishIn, ShiftOut, 
 from app.api.v1.auth import require_role, TokenData
 from app.core.today import get_today
 from app.services.shifts import compute_expected_cash, compute_variance, compute_expected_cash_treasurer
+from app.services.payments import received_php as _slice_received, received_share as _received_share
 
 router = APIRouter(prefix="/shifts", tags=["shifts"])
 
@@ -44,16 +45,14 @@ def _treasurer_aggregates(shift: TellerShift, db: Session) -> dict | None:
 
     demo_users = db.query(User.username).filter(User.is_demo == True).scalar_subquery()
 
-    received = lambda t: t.payment_status != PaymentStatus.PENDING
-
     overall_txns = (
         db.query(Transaction)
         .filter(Transaction.date == shift.date)
         .filter(~Transaction.cashier.in_(demo_users))
         .all()
     )
-    overall_bought = sum(t.php_amt for t in overall_txns if t.type == "BUY"  and received(t))
-    overall_sold   = sum(t.php_amt for t in overall_txns if t.type == "SELL" and received(t))
+    overall_bought = sum(_slice_received(t) for t in overall_txns if t.type == "BUY")
+    overall_sold   = sum(_slice_received(t) for t in overall_txns if t.type == "SELL")
 
     # Rider returns physically reaching the treasurer's drawer during her window.
     # `from_dispatches` = remits in (positive cash flow into drawer).
@@ -187,8 +186,8 @@ def _treasurer_aggregates(shift: TellerShift, db: Session) -> dict | None:
         .all()
     )
     counter_sells_net = sum(
-        (t.php_amt if t.type == "SELL" else -t.php_amt)
-        for t in counter_txns if received(t)
+        (_slice_received(t) if t.type == "SELL" else -_slice_received(t))
+        for t in counter_txns
     )
 
     return {
@@ -218,13 +217,12 @@ def _shift_to_out(shift: TellerShift, db: Session) -> ShiftOut:
         cashier=shift.cashier,
     ).all()
 
-    # PENDING transactions excluded from financial totals — cashier hasn't
-    # received the PHP yet on a PENDING SELL, hasn't paid yet on a PENDING BUY.
-    received = lambda t: t.payment_status != PaymentStatus.PENDING
-    total_sold       = sum(t.php_amt for t in txns if t.type == "SELL" and received(t))
-    total_bought     = sum(t.php_amt for t in txns if t.type == "BUY"  and received(t))
-    total_than       = sum(t.than for t in txns if received(t))
-    total_commission = sum(_comm(t) for t in txns if received(t))
+    # Slice-aware: a partially-pending split contributes its received cash
+    # portion to the cashier's totals (than/commission scale by share).
+    total_sold       = sum(_slice_received(t) for t in txns if t.type == "SELL")
+    total_bought     = sum(_slice_received(t) for t in txns if t.type == "BUY")
+    total_than       = sum(t.than * _received_share(t) for t in txns)
+    total_commission = sum(_comm(t) * _received_share(t) for t in txns)
     total_replenishment = sum(r.amount_php for r in shift.replenishments)
 
     # PENDING + APPROVED count against the till (cash already left); REJECTED
@@ -541,11 +539,11 @@ async def close_shift(
         date=today,
         cashier=current_user.username,
     ).all()
-    # PENDING transactions don't move cash on the cashier side until confirmed.
-    received = lambda t: t.payment_status != PaymentStatus.PENDING
-    total_sold       = sum(t.php_amt for t in txns if t.type == "SELL" and received(t))
-    total_bought     = sum(t.php_amt for t in txns if t.type == "BUY"  and received(t))
-    total_commission = sum(_comm(t) for t in txns if received(t))
+    # Slice-aware: cash portion of a split-pending txn moves cash today even
+    # though the cheque/transfer leg is still in flight.
+    total_sold       = sum(_slice_received(t) for t in txns if t.type == "SELL")
+    total_bought     = sum(_slice_received(t) for t in txns if t.type == "BUY")
+    total_commission = sum(_comm(t) * _received_share(t) for t in txns)
     total_replenishment = sum(r.amount_php for r in shift.replenishments)
 
     # Petty cash logged during this specific shift.

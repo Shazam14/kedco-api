@@ -8,6 +8,7 @@ from app.models.currency import Currency, DailyRate, DailyPosition
 from app.models.transaction import Transaction, DailySummary, PaymentStatus
 from app.models.user import User
 from app.services.forex import compute_position, CarryIn, TodayBuy
+from app.services.payments import received_php as _slice_received, received_share as _received_share
 from app.api.v1.auth import require_role, TokenData
 from app.core.today import get_today
 
@@ -124,12 +125,11 @@ async def close_day(
             ))
 
     # ── 6. Save today's DailySummary (upsert) ─────────────────────────
-    # PENDING transactions are excluded from financial totals — money hasn't
-    # actually changed hands until the customer pays.
-    received = lambda t: t.payment_status != PaymentStatus.PENDING
-    total_than   = sum(t.than    for t in txns_today if t.type == "SELL" and received(t))
-    total_bought = sum(t.php_amt for t in txns_today if t.type == "BUY"  and received(t))
-    total_sold   = sum(t.php_amt for t in txns_today if t.type == "SELL" and received(t))
+    # Slice-aware: a split CASH-RECEIVED + CHEQUE-PENDING contributes the cash
+    # leg to today's totals; than/commission scale by the received share.
+    total_than   = sum(t.than * _received_share(t) for t in txns_today if t.type == "SELL")
+    total_bought = sum(_slice_received(t)          for t in txns_today if t.type == "BUY")
+    total_sold   = sum(_slice_received(t)          for t in txns_today if t.type == "SELL")
     php_cash     = OPENING_CAPITAL + total_sold - total_bought
 
     summary = db.query(DailySummary).filter_by(date=today).first()
